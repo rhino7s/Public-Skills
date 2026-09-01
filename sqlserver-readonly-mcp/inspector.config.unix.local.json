@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sqlserver-readonly": {
+      "type": "stdio",
+      "command": "/bin/sh",
+      "args": [
+        "./start-mcp.sh",
+        "--config",
+        "./appsettings.local.json"
+      ]
+    }
+  }
+}

@@ -1,0 +1,21 @@
+# .NET build output
+**/bin/
+**/obj/
+.nuget/
+
+# Local Codex configuration
+/.codex/
+
+# Local configuration and runtime output
+**/appsettings.local.json
+**/integration.local.json
+**/logs/
+**/publish/
+*.log
+
+# IDE and test output
+.vs/
+.vscode/
+TestResults/
+*.user
+*.suo

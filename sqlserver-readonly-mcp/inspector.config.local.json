@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "sqlserver-readonly": {
+      "type": "stdio",
+      "command": "./publish/win-x64/sqlserver-readonly-mcp.exe",
+      "args": [
+        "--config",
+        "./appsettings.local.json"
+      ]
+    }
+  }
+}

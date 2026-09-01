@@ -1,0 +1,14 @@
+{
+  "findObjectReferences": {
+    "targetDatabase": "ExampleDatabase",
+    "targetObject": "dbo.ExampleReferenceTarget",
+    "searchDatabase": "ExampleDatabase",
+    "includeJobs": false,
+    "requireReference": true
+  },
+  "getObjectDetails": {
+    "database": "ExampleDatabase",
+    "objectName": "dbo.ExampleProcedure",
+    "definitionSearch": "ExampleColumn"
+  }
+}

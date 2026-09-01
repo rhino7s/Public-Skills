@@ -1,0 +1,15 @@
+interface:
+  display_name: "dab-mcp-skill"
+  short_description: "查询财报、市场共识、估值、财务期间及股票或指数区间涨跌幅，支持批量比较与跨市场财期对齐"
+  default_prompt: "使用 $dab-mcp-skill 查询指定标的的财报、市场共识、估值、财务期间或股票/指数区间涨跌幅。"
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "dab-sql"
+      description: "只读查询 DAB 财务、市场共识、估值和价格表现数据"
+      transport: "streamable_http"
+      url: "http://internal.aitools:5000/mcp"
+
+policy:
+  allow_implicit_invocation: true

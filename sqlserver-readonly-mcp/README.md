@@ -28,7 +28,12 @@ SQL Server 低权限账号是最终安全边界。`execute_procedure` 可执行�
 
 ### 1. 取得程序
 
-支持 `win-x64`、`linux-x64`、`osx-x64` 和 `osx-arm64`。自包含发布包不要求目标机器安装 .NET；从源码构建需要 .NET 10 SDK。
+自动发布的预编译包目前只提供 Windows x64，自包含包不要求目标机器安装 .NET：
+
+- [下载最新 Windows x64 ZIP](https://github.com/rhino7s/Public-Skills/releases/latest/download/sqlserver-readonly-mcp-win-x64.zip)
+- [下载 SHA-256 校验文件](https://github.com/rhino7s/Public-Skills/releases/latest/download/sqlserver-readonly-mcp-win-x64.zip.sha256)
+
+安装和校验步骤见 [Agent 通用安装说明](docs/agent-install.md)。Linux、Intel Mac 和 Apple Silicon Mac 暂无预编译 Release；需要安装 .NET 10 SDK 并从源码发布。
 
 ### 2. 设置 SQL Server 权限
 
@@ -65,6 +70,8 @@ dotnet test SqlServerReadonlyMcp.slnx --no-restore --no-build
 ```
 
 Linux/macOS 使用 `publish-all.sh`。发布结果位于被 Git 忽略的 `publish/<rid>`。
+
+Windows x64 GitHub Release 由 [发布工作流](https://github.com/rhino7s/Public-Skills/actions/workflows/release-sqlserver-readonly-mcp.yml) 自动建立。标签必须使用 `sqlserver-readonly-mcp-v<项目版本>`，例如 `sqlserver-readonly-mcp-v0.9.0`；标签版本必须与项目文件中的 `Version` 完全一致。带预发布后缀的版本（例如 `0.10.0-rc.1`）会发布为 Pre-release，且不会替代正式 Latest。云端工作流从标签提交构建、测试，并从全新暂存目录按固定白名单生成 ZIP，不使用开发机的 `publish/`、日志或本地配置。
 
 本机存在 `appsettings.local.json` 时，数据库访问逻辑变更必须在提交或发布前使用被 Git 忽略的 `integration.local.json` 执行真实只读测试：
 

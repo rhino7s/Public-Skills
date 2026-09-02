@@ -2,6 +2,7 @@
 **/bin/
 **/obj/
 .nuget/
+sqlserver-readonly-mcp/artifacts/
 
 # Local Codex configuration
 /.codex/

@@ -1,0 +1,111 @@
+name: Release SQL Server Read-only MCP for Windows
+
+on:
+  push:
+    tags:
+      - "sqlserver-readonly-mcp-v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows-x64:
+    name: Build and release Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: sqlserver-readonly-mcp/global.json
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $tagPrefix = 'sqlserver-readonly-mcp-v'
+          $tagName = $env:GITHUB_REF_NAME
+          if ([string]::IsNullOrWhiteSpace($tagName)) {
+              throw 'GITHUB_REF_NAME is unavailable.'
+          }
+
+          if (-not $tagName.StartsWith($tagPrefix, [StringComparison]::Ordinal)) {
+              throw "Unexpected release tag: $tagName"
+          }
+
+          $releaseVersion = $tagName.Substring($tagPrefix.Length)
+          if ($releaseVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+              throw "Invalid release version in tag: $tagName"
+          }
+
+          $releaseOutput = Join-Path $env:RUNNER_TEMP "sqlserver-readonly-mcp-release-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "RELEASE_VERSION=$releaseVersion" >> $env:GITHUB_ENV
+          "RELEASE_IS_PRERELEASE=$($releaseVersion.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          "RELEASE_OUTPUT=$releaseOutput" >> $env:GITHUB_ENV
+
+      - name: Restore dependencies
+        working-directory: sqlserver-readonly-mcp
+        shell: pwsh
+        run: dotnet restore SqlServerReadonlyMcp.slnx
+
+      - name: Check public repository contents
+        working-directory: sqlserver-readonly-mcp
+        shell: pwsh
+        run: .\check-public-repo.ps1
+
+      - name: Build
+        working-directory: sqlserver-readonly-mcp
+        shell: pwsh
+        run: dotnet build SqlServerReadonlyMcp.slnx --configuration Release --no-restore
+
+      - name: Test
+        working-directory: sqlserver-readonly-mcp
+        shell: pwsh
+        run: dotnet test SqlServerReadonlyMcp.slnx --configuration Release --no-restore --no-build
+
+      - name: Create clean Windows release package
+        working-directory: sqlserver-readonly-mcp
+        shell: pwsh
+        run: .\create-windows-release.ps1 -Version $env:RELEASE_VERSION -OutputDirectory $env:RELEASE_OUTPUT
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $archivePath = Join-Path $env:RELEASE_OUTPUT 'sqlserver-readonly-mcp-win-x64.zip'
+          $checksumPath = Join-Path $env:RELEASE_OUTPUT 'sqlserver-readonly-mcp-win-x64.zip.sha256'
+
+          $releaseArguments = @(
+              'release'
+              'create'
+              $env:GITHUB_REF_NAME
+              $archivePath
+              $checksumPath
+              '--repo'
+              $env:GITHUB_REPOSITORY
+              '--verify-tag'
+              '--generate-notes'
+              '--title'
+              "SQL Server Read-only MCP v$env:RELEASE_VERSION"
+          )
+
+          if ($env:RELEASE_IS_PRERELEASE -eq 'true') {
+              $releaseArguments += @('--prerelease', '--latest=false')
+          }
+          else {
+              $releaseArguments += '--latest'
+          }
+
+          & gh @releaseArguments
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub Release creation failed with exit code $LASTEXITCODE."
+          }

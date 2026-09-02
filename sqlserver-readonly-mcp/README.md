@@ -33,7 +33,7 @@ SQL Server 低权限账号是最终安全边界。`execute_procedure` 可执行�
 - [下载最新 Windows x64 ZIP](https://github.com/rhino7s/Public-Skills/releases/latest/download/sqlserver-readonly-mcp-win-x64.zip)
 - [下载 SHA-256 校验文件](https://github.com/rhino7s/Public-Skills/releases/latest/download/sqlserver-readonly-mcp-win-x64.zip.sha256)
 
-安装和校验步骤见 [Agent 通用安装说明](docs/agent-install.md)。Linux、Intel Mac 和 Apple Silicon Mac 暂无预编译 Release；需要安装 .NET 10 SDK 并从源码发布。
+安装和校验步骤见 [Agent 通用安装说明](docs/agent-install.md)。只允许使用 `rhino7s/Public-Skills` 发布的 `sqlserver-readonly-mcp-win-x64.zip`；不要按项目名称搜索或替换为其他同名、近似 MCP。正确可执行文件为 `sqlserver-readonly-mcp.exe`，MCP 名称为 `sqlserver-readonly`，Windows 包不需要另装 .NET Runtime。Linux、Intel Mac 和 Apple Silicon Mac 暂无预编译 Release；需要安装 .NET 10 SDK 并从源码发布。
 
 ### 2. 设置 SQL Server 权限
 

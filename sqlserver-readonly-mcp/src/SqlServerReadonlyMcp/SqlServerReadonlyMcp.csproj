@@ -3,7 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>sqlserver-readonly-mcp</AssemblyName>
     <RootNamespace>SqlServerReadonlyMcp</RootNamespace>
-    <Version>0.9.0</Version>
+    <Version>0.9.1</Version>
     <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>

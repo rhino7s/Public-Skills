@@ -45,7 +45,7 @@ SQL Server 低权限账号是最终安全边界。`execute_procedure` 可执行�
 
 复制 [appsettings.example.json](appsettings.example.json) 为 `appsettings.local.json`，填写专用低权限账号。字段说明、默认值及允许范围由 [appsettings.schema.json](appsettings.schema.json) 维护；真实配置已被 Git 忽略。
 
-限制配置文件 ACL，只允许使用者和管理员读取。`trustServerCertificate=true` 只适合没有可信证书的内部环境；部署可信证书后应改为 `false`。
+凭证和日志必须放在 Release 目录之外，并限制可访问账号；这不是把当前用户设为只读。具体 ACL 和日志要求见 [Agent 通用安装说明](docs/agent-install.md)。`trustServerCertificate=true` 只适合没有可信证书的内部环境；部署可信证书后应改为 `false`。
 
 ### 4. 接入 Agent
 
@@ -72,6 +72,10 @@ dotnet test SqlServerReadonlyMcp.slnx --no-restore --no-build
 Linux/macOS 使用 `publish-all.sh`。发布结果位于被 Git 忽略的 `publish/<rid>`。
 
 Windows x64 GitHub Release 由 [发布工作流](https://github.com/rhino7s/Public-Skills/actions/workflows/release-sqlserver-readonly-mcp.yml) 自动建立。标签必须使用 `sqlserver-readonly-mcp-v<项目版本>`，例如 `sqlserver-readonly-mcp-v0.9.0`；标签版本必须与项目文件中的 `Version` 完全一致。带预发布后缀的版本（例如 `0.10.0-rc.1`）会发布为 Pre-release，且不会替代正式 Latest。云端工作流从标签提交构建、测试，并从全新暂存目录按固定白名单生成 ZIP，不使用开发机的 `publish/`、日志或本地配置。
+
+在已提交并推送版本变更后，可从仓库根目录运行 `pwsh -NoProfile -File ./sqlserver-readonly-mcp/push-release-tag.ps1 -Version <版本>`。脚本只允许在干净的 `main`、`HEAD=origin/main`、固定远端及 noreply Git 邮箱下运行；本机检查、构建和测试通过后，只新建并推送对应 Release 标签，不会推送分支或强制改写历史。标签推送后，脚本只读查询固定 GitHub 仓库，等待 workflow 完成并校验 Release 的标签、预发布状态及两个固定资产。
+
+若本机同时存在 `appsettings.local.json` 和 `integration.local.json`，发布脚本会自动运行 `test-integration.ps1`。否则必须明确添加且只能添加一个参数：已对当前提交完成真实测试时使用 `-ConfirmIntegrationTestsCompleted`；本次没有数据库访问逻辑变更时使用 `-ConfirmIntegrationTestsNotRequired`。没有测试或确认时不会创建标签。
 
 本机存在 `appsettings.local.json` 时，数据库访问逻辑变更必须在提交或发布前使用被 Git 忽略的 `integration.local.json` 执行真实只读测试：
 

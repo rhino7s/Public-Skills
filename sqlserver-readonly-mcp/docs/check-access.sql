@@ -1,5 +1,5 @@
 /*==============================================================
-  SQL Server Login 最终权限能力检查
+  SQL Server 最终权限能力检查
   role_sys：
     admin    = CONTROL DATABASE
     ddl      = 业务数据库具有 DATABASE ALTER / ALTER ANY SCHEMA
@@ -13,7 +13,10 @@
     特定 Procedure EXECUTE
     或 Schema EXECUTE
   注意：
-    - 将 <readonly_login> 替换为待检查 Login；执行者须有 IMPERSONATE 该 Login 的权限
+    - @CheckMode = currentSession：默认；必须由实际 MCP Windows/AD 身份直接连接并运行，不执行身份模拟
+    - @CheckMode = impersonateLogin：只适用于单一 SQL Login 或 Windows 用户；将 <readonly_login> 替换为目标，执行者须有 IMPERSONATE 权限
+    - @DatabaseFilter = NULL：检查所有可访问数据库；也可填写一个数据库名称，缩小检查范围
+    - AD 群组不能作为 EXECUTE AS LOGIN 目标；群组成员的最终权限必须使用 currentSession 检查
     - 不检查原始 Role 名称，只看最终有效权限
     - 不扫描 Column-level 权限
     - 不把 guest 当 DatabaseUser
@@ -22,10 +25,8 @@
 /*
     USE [ExampleDatabase];
 
-    EXECUTE AS LOGIN = '<readonly_login>';
-
     SELECT
-        SUSER_SNAME() AS LoginName,
+        ORIGINAL_LOGIN() AS LoginName,
         USER_NAME() AS DatabaseUser;
 
     -- Database 层级
@@ -38,13 +39,33 @@
     FROM fn_my_permissions('dbo.ExampleTable', 'OBJECT')
     ORDER BY permission_name;
 
-    REVERT;
 */
 ==============================================================*/
+DECLARE @CheckMode nvarchar(32) = N'currentSession';
 DECLARE @LoginName sysname = N'<readonly_login>';
-DECLARE @LoginSid varbinary(85) = SUSER_SID(@LoginName);
-IF @LoginSid IS NULL
-    THROW 50000, N'找不到指定的 SQL Server Login。', 1;
+DECLARE @DatabaseFilter sysname = NULL;
+SET @DatabaseFilter = COALESCE
+(
+    @DatabaseFilter,
+    TRY_CONVERT(sysname, SESSION_CONTEXT(N'sqlserver_readonly_mcp.accessCheckDatabase'))
+);
+IF @CheckMode NOT IN (N'currentSession', N'impersonateLogin')
+    THROW 50000, N'@CheckMode 只允许 currentSession 或 impersonateLogin。', 1;
+IF @CheckMode = N'impersonateLogin'
+   AND SUSER_SID(@LoginName) IS NULL
+    THROW 50001, N'找不到指定的 SQL Server Login。', 1;
+IF @CheckMode = N'currentSession'
+    SET @LoginName = ORIGINAL_LOGIN();
+IF @DatabaseFilter IS NOT NULL
+   AND NOT EXISTS
+   (
+       SELECT 1
+       FROM sys.databases
+       WHERE [name] = @DatabaseFilter
+         AND state_desc = N'ONLINE'
+         AND HAS_DBACCESS([name]) = 1
+   )
+    THROW 50002, N'@DatabaseFilter 指定的数据库不存在、未联机或当前身份无权访问。', 1;
 DROP TABLE IF EXISTS #DatabaseCapabilities;
 CREATE TABLE #DatabaseCapabilities
 (
@@ -52,12 +73,11 @@ CREATE TABLE #DatabaseCapabilities
     DatabaseUser     sysname         NULL,
     role_sys         nvarchar(150)   NULL,
     [grant]          nvarchar(128)   NULL,
-    execute_details  nvarchar(max)   NULL
+    execute_details  nvarchar(max)   NULL,
+    check_error      nvarchar(2048)  NULL
 );
 DECLARE @DatabaseName sysname;
 DECLARE @Sql nvarchar(max);
-DECLARE @LoginLiteral nvarchar(258)
-    = QUOTENAME(@LoginName, NCHAR(39));
 
 --------------------------------------------------------------
 -- 遍历所有 Online Database
@@ -70,6 +90,7 @@ SELECT [name]
 FROM sys.databases
 WHERE state_desc = N'ONLINE'
   AND HAS_DBACCESS([name]) = 1
+  AND (@DatabaseFilter IS NULL OR [name] = @DatabaseFilter)
 ORDER BY [name];
 OPEN database_cursor;
 FETCH NEXT FROM database_cursor
@@ -94,26 +115,21 @@ DECLARE @ExecuteDetails nvarchar(max) = NULL;
 DECLARE @IsImpersonated bit = 0;
 
 --------------------------------------------------------------
--- 1. 找 Login SID 真正映射的 Database User
+-- 1. 建立实际检查身份
 
 --------------------------------------------------------------
-SELECT TOP (1)
-    @DatabaseUser = dp.[name]
-FROM sys.database_principals AS dp
-WHERE dp.[sid] = @LoginSid
-  AND dp.principal_id > 0
-  AND dp.[type] IN
-      (
-          N''S'',   -- SQL User
-          N''U'',   -- Windows User
-          N''G'',   -- Windows Group
-          N''E'',   -- External User
-          N''X''    -- External Group
-      )
-ORDER BY dp.principal_id;
 BEGIN TRY
-    EXECUTE AS LOGIN = ' + @LoginLiteral + N';
-    SET @IsImpersonated = 1;
+    IF @CheckMode = N''impersonateLogin''
+    BEGIN
+        EXECUTE AS LOGIN = @TargetLoginName;
+        SET @IsImpersonated = 1;
+    END;
+
+    SET @DatabaseUser =
+        CASE
+            WHEN USER_NAME() = N''guest'' THEN NULL
+            ELSE USER_NAME()
+        END;
 
     /*==========================================================
       2. ADMIN
@@ -709,8 +725,11 @@ BEGIN TRY
     ----------------------------------------------------------
     -- 10. REVERT
     ----------------------------------------------------------
-    REVERT;
-    SET @IsImpersonated = 0;
+    IF @IsImpersonated = 1
+    BEGIN
+        REVERT;
+        SET @IsImpersonated = 0;
+    END;
 END TRY
 BEGIN CATCH
     IF @IsImpersonated = 1
@@ -734,7 +753,8 @@ INSERT INTO #DatabaseCapabilities
     DatabaseUser,
     role_sys,
     [grant],
-    execute_details
+    execute_details,
+    check_error
 )
 VALUES
 (
@@ -742,7 +762,8 @@ VALUES
     @DatabaseUser,
     @RoleSummary,
     @GrantSummary,
-    @ExecuteDetails
+    @ExecuteDetails,
+    NULL
 );
 ';
     ----------------------------------------------------------
@@ -751,8 +772,9 @@ VALUES
     BEGIN TRY
         EXEC sys.sp_executesql
             @Sql,
-            N'@LoginSid varbinary(85)',
-            @LoginSid = @LoginSid;
+            N'@CheckMode nvarchar(32), @TargetLoginName sysname',
+            @CheckMode = @CheckMode,
+            @TargetLoginName = @LoginName;
     END TRY
     BEGIN CATCH
         PRINT
@@ -772,7 +794,8 @@ VALUES
             DatabaseUser,
             role_sys,
             [grant],
-            execute_details
+            execute_details,
+            check_error
         )
         VALUES
         (
@@ -780,7 +803,16 @@ VALUES
             NULL,
             NULL,
             NULL,
-            NULL
+            NULL,
+            CONCAT
+            (
+                N'Error ',
+                CONVERT(nvarchar(20), ERROR_NUMBER()),
+                N'，Line ',
+                CONVERT(nvarchar(20), ERROR_LINE()),
+                N'：',
+                ERROR_MESSAGE()
+            )
         );
     END CATCH;
     FETCH NEXT FROM database_cursor
@@ -794,14 +826,20 @@ DEALLOCATE database_cursor;
 
 --------------------------------------------------------------
 SELECT
+    @CheckMode AS CheckMode,
+    @LoginName AS LoginName;
+
+SELECT
     DatabaseName,
     DatabaseUser,
     role_sys,
     [grant],
-    execute_details
+    execute_details,
+    check_error
 FROM #DatabaseCapabilities
 WHERE DatabaseUser IS NOT NULL
    OR role_sys IS NOT NULL
    OR [grant] IS NOT NULL
    OR execute_details IS NOT NULL
+   OR check_error IS NOT NULL
 ORDER BY DatabaseName;

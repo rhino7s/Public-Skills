@@ -11,6 +11,8 @@ public sealed class McpSettings
 
 public sealed class ConnectionSettings
 {
+    public string? Authentication { get; init; }
+
     public string Server { get; init; } = string.Empty;
 
     public string Username { get; init; } = string.Empty;
@@ -26,6 +28,16 @@ public sealed class ConnectionSettings
     public int ConnectTimeoutSeconds { get; init; } = 10;
 
     public int MaxPoolSize { get; init; } = 4;
+}
+
+public static class ConnectionAuthenticationModes
+{
+    public const string WindowsIntegrated = "windowsIntegrated";
+
+    public const string SqlPassword = "sqlPassword";
+
+    public static string Resolve(ConnectionSettings settings) =>
+        settings.Authentication ?? SqlPassword;
 }
 
 public sealed class QuerySettings

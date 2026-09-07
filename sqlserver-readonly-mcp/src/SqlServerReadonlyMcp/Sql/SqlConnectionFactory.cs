@@ -35,13 +35,11 @@ public sealed class SqlConnectionFactory
         }
     }
 
-    private static string BuildConnectionString(ConnectionSettings settings)
+    internal static string BuildConnectionString(ConnectionSettings settings)
     {
         var builder = new SqlConnectionStringBuilder
         {
             DataSource = settings.Server,
-            UserID = settings.Username,
-            Password = settings.Password,
             InitialCatalog = settings.DefaultDatabase,
             Encrypt = settings.Encrypt,
             TrustServerCertificate = settings.TrustServerCertificate,
@@ -53,6 +51,27 @@ public sealed class SqlConnectionFactory
             ApplicationName = "sqlserver-readonly-mcp",
             Pooling = true,
         };
+
+        var authentication = ConnectionAuthenticationModes.Resolve(settings);
+        if (string.Equals(
+                authentication,
+                ConnectionAuthenticationModes.WindowsIntegrated,
+                StringComparison.Ordinal))
+        {
+            builder.IntegratedSecurity = true;
+        }
+        else if (string.Equals(
+                     authentication,
+                     ConnectionAuthenticationModes.SqlPassword,
+                     StringComparison.Ordinal))
+        {
+            builder.UserID = settings.Username;
+            builder.Password = settings.Password;
+        }
+        else
+        {
+            throw new InvalidOperationException($"不支持的 SQL Server 认证模式：{authentication}");
+        }
 
         return builder.ConnectionString;
     }

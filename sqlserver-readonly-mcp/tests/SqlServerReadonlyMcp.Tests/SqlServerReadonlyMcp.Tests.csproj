@@ -13,4 +13,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SqlServerReadonlyMcp\SqlServerReadonlyMcp.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\docs\check-access.sql"
+          Link="check-access.sql"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

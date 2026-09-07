@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using SqlServerReadonlyMcp.Configuration;
 using SqlServerReadonlyMcp.Sql;
 
 namespace SqlServerReadonlyMcp.Tests;
@@ -43,9 +44,10 @@ public sealed class McpProtocolSmokeTests : IDisposable
         {
             connection = new
             {
+                authentication = ConnectionAuthenticationModes.WindowsIntegrated,
                 server = "invalid.example.local",
-                username = "readonly_test",
-                password = "not-a-real-secret",
+                username = string.Empty,
+                password = string.Empty,
             },
             logging = new
             {

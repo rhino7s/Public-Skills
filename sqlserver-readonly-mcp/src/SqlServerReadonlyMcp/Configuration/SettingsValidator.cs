@@ -10,8 +10,7 @@ public static class SettingsValidator
 
         var errors = new List<string>();
         Required(settings.Connection.Server, "connection.server", errors);
-        Required(settings.Connection.Username, "connection.username", errors);
-        Required(settings.Connection.Password, "connection.password", errors);
+        ValidateAuthentication(settings.Connection, errors);
         Range(settings.Connection.ConnectTimeoutSeconds, 1, 30, "connection.connectTimeoutSeconds", errors);
         Range(settings.Connection.MaxPoolSize, 1, 8, "connection.maxPoolSize", errors);
         Range(settings.Query.TimeoutSeconds, 1, 120, "query.timeoutSeconds", errors);
@@ -35,6 +34,46 @@ public static class SettingsValidator
         if (errors.Count > 0)
         {
             throw new SettingsException("配置验证失败：" + string.Join(" ", errors));
+        }
+    }
+
+    private static void ValidateAuthentication(ConnectionSettings settings, ICollection<string> errors)
+    {
+        var authentication = ConnectionAuthenticationModes.Resolve(settings);
+        if (string.Equals(
+                authentication,
+                ConnectionAuthenticationModes.WindowsIntegrated,
+                StringComparison.Ordinal))
+        {
+            MustBeEmpty(settings.Username, "connection.username", authentication, errors);
+            MustBeEmpty(settings.Password, "connection.password", authentication, errors);
+            return;
+        }
+
+        if (string.Equals(
+                authentication,
+                ConnectionAuthenticationModes.SqlPassword,
+                StringComparison.Ordinal))
+        {
+            Required(settings.Username, "connection.username", errors);
+            Required(settings.Password, "connection.password", errors);
+            return;
+        }
+
+        errors.Add(
+            $"connection.authentication 只允许 '{ConnectionAuthenticationModes.WindowsIntegrated}' 或 " +
+            $"'{ConnectionAuthenticationModes.SqlPassword}'。");
+    }
+
+    private static void MustBeEmpty(
+        string? value,
+        string name,
+        string authentication,
+        ICollection<string> errors)
+    {
+        if (!string.IsNullOrEmpty(value))
+        {
+            errors.Add($"{name} 在 connection.authentication='{authentication}' 时必须为空字符串。");
         }
     }
 

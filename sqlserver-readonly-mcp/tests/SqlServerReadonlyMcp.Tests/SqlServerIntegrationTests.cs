@@ -1,6 +1,9 @@
 using System.Text.Json;
+using Microsoft.Data.SqlClient;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using SqlServerReadonlyMcp.Configuration;
+using SqlServerReadonlyMcp.Sql;
 
 namespace SqlServerReadonlyMcp.Tests;
 
@@ -25,6 +28,70 @@ public sealed class SqlServerIntegrationTests
         OptionalEnvironmentVariable(DetailsDatabaseVariable) is not null &&
         OptionalEnvironmentVariable(DetailsObjectVariable) is not null &&
         OptionalEnvironmentVariable(DetailsSearchVariable) is not null;
+
+    public static bool IsAccessCheckConfigured =>
+        OptionalEnvironmentVariable(ConfigVariable) is not null;
+
+    [Fact(
+        Timeout = 180_000,
+        Skip = "未配置真实库权限检查。",
+        SkipUnless = nameof(IsAccessCheckConfigured))]
+    public async Task AccessCheckRunsAsCurrentConnectionIdentity()
+    {
+        var configPath = RequiredEnvironmentVariable(ConfigVariable);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        Assert.True(File.Exists(configPath), $"找不到集成测试配置：{configPath}");
+
+        var settings = SettingsLoader.Load(configPath);
+        var connectionString = SqlConnectionFactory.BuildConnectionString(settings.Connection);
+        var scriptPath = Path.Combine(AppContext.BaseDirectory, "check-access.sql");
+
+        Assert.True(File.Exists(scriptPath), $"找不到权限检查脚本：{scriptPath}");
+
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using (var scopeCommand = connection.CreateCommand())
+        {
+            scopeCommand.CommandText =
+                "EXEC sys.sp_set_session_context " +
+                "@key=N'sqlserver_readonly_mcp.accessCheckDatabase', @value=@database;";
+            scopeCommand.Parameters.AddWithValue("@database", connection.Database);
+            await scopeCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = await File.ReadAllTextAsync(scriptPath, cancellationToken);
+        command.CommandTimeout = 120;
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        Assert.True(await reader.ReadAsync(cancellationToken));
+        Assert.Equal("currentSession", reader.GetString(reader.GetOrdinal("CheckMode")));
+        Assert.False(reader.IsDBNull(reader.GetOrdinal("LoginName")));
+        Assert.False(string.IsNullOrWhiteSpace(reader.GetString(reader.GetOrdinal("LoginName"))));
+
+        Assert.True(await reader.NextResultAsync(cancellationToken));
+        Assert.NotEqual(-1, reader.GetOrdinal("DatabaseName"));
+        Assert.NotEqual(-1, reader.GetOrdinal("DatabaseUser"));
+        Assert.NotEqual(-1, reader.GetOrdinal("role_sys"));
+        Assert.NotEqual(-1, reader.GetOrdinal("grant"));
+        Assert.NotEqual(-1, reader.GetOrdinal("execute_details"));
+        var checkErrorOrdinal = reader.GetOrdinal("check_error");
+
+        Assert.True(await reader.ReadAsync(cancellationToken), "权限检查没有返回目标数据库结果。");
+        var checkError = reader.IsDBNull(checkErrorOrdinal)
+            ? null
+            : reader.GetString(checkErrorOrdinal);
+        Assert.True(string.IsNullOrWhiteSpace(checkError), $"权限检查失败：{checkError}");
+        Assert.Equal(
+            connection.Database,
+            reader.GetString(reader.GetOrdinal("DatabaseName")),
+            ignoreCase: true);
+        Assert.False(reader.IsDBNull(reader.GetOrdinal("DatabaseUser")));
+        Assert.False(string.IsNullOrWhiteSpace(reader.GetString(reader.GetOrdinal("DatabaseUser"))));
+        Assert.False(await reader.ReadAsync(cancellationToken), "单数据库检查不应返回额外数据库。");
+    }
 
     [Fact(
         Timeout = 120_000,

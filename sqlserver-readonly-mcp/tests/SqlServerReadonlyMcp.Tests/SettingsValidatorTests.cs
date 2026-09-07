@@ -5,7 +5,7 @@ namespace SqlServerReadonlyMcp.Tests;
 public sealed class SettingsValidatorTests
 {
     [Fact]
-    public void AcceptsPracticalDefaultsWithCredentials()
+    public void AcceptsLegacyCredentialsWithoutAuthenticationMode()
     {
         var settings = ValidSettings();
 
@@ -13,10 +13,135 @@ public sealed class SettingsValidatorTests
     }
 
     [Fact]
+    public void AcceptsWindowsIntegratedWithBlankCredentialFields()
+    {
+        var settings = new McpSettings
+        {
+            Connection = new ConnectionSettings
+            {
+                Authentication = ConnectionAuthenticationModes.WindowsIntegrated,
+                Server = "sql.internal",
+                Username = string.Empty,
+                Password = string.Empty,
+            },
+        };
+
+        SettingsValidator.Validate(settings);
+    }
+
+    [Fact]
+    public void MissingAuthenticationDefaultsToSqlPassword()
+    {
+        var settings = new ConnectionSettings { Server = "sql.internal" };
+
+        Assert.Equal(
+            ConnectionAuthenticationModes.SqlPassword,
+            ConnectionAuthenticationModes.Resolve(settings));
+    }
+
+    [Fact]
+    public void MissingAuthenticationAndBlankCredentialsAreRejected()
+    {
+        var settings = new McpSettings
+        {
+            Connection = new ConnectionSettings { Server = "sql.internal" },
+        };
+
+        var exception = Assert.Throws<SettingsException>(() => SettingsValidator.Validate(settings));
+
+        Assert.Contains("connection.username", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("connection.password", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsCredentialsInWindowsIntegratedMode()
+    {
+        var settings = new McpSettings
+        {
+            Connection = new ConnectionSettings
+            {
+                Authentication = ConnectionAuthenticationModes.WindowsIntegrated,
+                Server = "sql.internal",
+                Username = "domain-user",
+                Password = "not-a-real-secret",
+            },
+        };
+
+        var exception = Assert.Throws<SettingsException>(() => SettingsValidator.Validate(settings));
+
+        Assert.Contains("connection.username", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("connection.password", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("必须为空字符串", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsUnknownAuthenticationMode()
+    {
+        var settings = new McpSettings
+        {
+            Connection = new ConnectionSettings
+            {
+                Authentication = "unknown",
+                Server = "sql.internal",
+            },
+        };
+
+        var exception = Assert.Throws<SettingsException>(() => SettingsValidator.Validate(settings));
+
+        Assert.Contains("connection.authentication", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("SQLPASSWORD")]
+    public void RejectsNonCanonicalAuthenticationMode(string authentication)
+    {
+        var settings = new McpSettings
+        {
+            Connection = new ConnectionSettings
+            {
+                Authentication = authentication,
+                Server = "sql.internal",
+                Username = "readonly_agent",
+                Password = "not-a-real-secret",
+            },
+        };
+
+        var exception = Assert.Throws<SettingsException>(() => SettingsValidator.Validate(settings));
+
+        Assert.Contains("connection.authentication", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RejectsWhitespaceSqlCredentials()
+    {
+        var settings = new McpSettings
+        {
+            Connection = new ConnectionSettings
+            {
+                Authentication = ConnectionAuthenticationModes.SqlPassword,
+                Server = "sql.internal",
+                Username = " ",
+                Password = "\t",
+            },
+        };
+
+        var exception = Assert.Throws<SettingsException>(() => SettingsValidator.Validate(settings));
+
+        Assert.Contains("connection.username", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("connection.password", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RejectsBlankCredentialsAndUnsafeLimitRanges()
     {
         var settings = new McpSettings
         {
+            Connection = new ConnectionSettings
+            {
+                Authentication = ConnectionAuthenticationModes.SqlPassword,
+            },
             Query = new QuerySettings { MaxRows = 0, MaxResultSizeKb = 8 },
         };
 

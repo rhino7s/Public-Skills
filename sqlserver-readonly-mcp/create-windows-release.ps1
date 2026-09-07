@@ -95,6 +95,8 @@ try {
         @{ Source = Join-Path $projectRoot 'appsettings.schema.json'; Destination = Join-Path $packagePath 'appsettings.schema.json' }
         @{ Source = Join-Path $projectRoot 'README.md'; Destination = Join-Path $packagePath 'README.md' }
         @{ Source = Join-Path $projectRoot 'docs\agent-install.md'; Destination = Join-Path $packageDocsPath 'agent-install.md' }
+        @{ Source = Join-Path $projectRoot 'docs\check-access.sql'; Destination = Join-Path $packageDocsPath 'check-access.sql' }
+        @{ Source = Join-Path $projectRoot 'docs\sqlserver-permissions.md'; Destination = Join-Path $packageDocsPath 'sqlserver-permissions.md' }
     )
 
     foreach ($packageSource in $packageSources) {
@@ -116,6 +118,8 @@ try {
         'appsettings.example.json',
         'appsettings.schema.json',
         'docs/agent-install.md',
+        'docs/check-access.sql',
+        'docs/sqlserver-permissions.md',
         'sqlserver-readonly-mcp.exe'
     ) | Sort-Object
     $actualEntries = @(

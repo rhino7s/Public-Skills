@@ -2,7 +2,7 @@
 
 面向局域网 Agent 的本地 `stdio` MCP，用于查询资料、定位对象、读取 SQL 定义及执行受限的只读 T-SQL。
 
-SQL Server 低权限账号是最终安全边界。`execute_procedure` 可执行另外授权的存储过程，过程可能修改资料，必须单独审核。
+SQL Server 低权限身份是最终安全边界。默认使用专用 SQL Login；管理员确认 AD 映射与最终权限后，也可明确改用启动 MCP 进程的 Windows/AD 身份。`execute_procedure` 可执行另外授权的存储过程，过程可能修改资料，必须单独审核。
 
 ## 工具
 
@@ -22,7 +22,7 @@ SQL Server 低权限账号是最终安全边界。`execute_procedure` 可执行�
 - `execute_procedure` 只接受一条静态命名调用，且三段名数据库必须与 `database` 参数一致。
 - 每个数据库参数只接受一个明确数据库，不接受数据库列表；工具不会枚举数据库或无目的抓取资料。
 - MCP 不维护业务 SP 白名单。SQL Server 仍会拒绝账号没有权限的资料和过程。
-- 专用账号不得加入 `sysadmin`、`db_owner`、`db_ddladmin`，也不应取得数据库级 `GRANT EXECUTE`。
+- MCP 使用的 Windows/AD 身份或 SQL Login 不得加入 `sysadmin`、`db_owner`、`db_ddladmin`，也不应取得数据库级 `GRANT EXECUTE`。
 
 ## 快速开始
 
@@ -37,15 +37,17 @@ SQL Server 低权限账号是最终安全边界。`execute_procedure` 可执行�
 
 ### 2. 设置 SQL Server 权限
 
-建议为专用 Login 在允许访问的数据库加入 `db_datareader`、`db_denydatawriter` 并授予 `VIEW DEFINITION`；存储过程只做对象级 `GRANT EXECUTE`。
+Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码模式则使用专用低权限 SQL Login。两者都只在允许访问的数据库加入 `db_datareader`、`db_denydatawriter` 并授予 `VIEW DEFINITION`；存储过程只做对象级 `GRANT EXECUTE`。
 
 完整授权、Job 查询权限、撤销方式及风险说明见 [SQL Server 权限](docs/sqlserver-permissions.md)。配置后可运行 [check-access.sql](docs/check-access.sql) 做只读检查。
 
 ### 3. 建立本机配置
 
-复制 [appsettings.example.json](appsettings.example.json) 为 `appsettings.local.json`，填写专用低权限账号。字段说明、默认值及允许范围由 [appsettings.schema.json](appsettings.schema.json) 维护；真实配置已被 Git 忽略。
+复制 [appsettings.example.json](appsettings.example.json) 为 `appsettings.local.json`。默认 `authentication=sqlPassword`，必须在本机填写专用低权限 SQL Login；空白凭证会导致启动失败。只有管理员确认 AD 映射及实际用户最终权限后，才能明确改为 `windowsIntegrated`，并将 `username` 和 `password` 保持为空字符串。字段说明、默认值及允许范围由 [appsettings.schema.json](appsettings.schema.json) 维护；真实配置已被 Git 忽略。
 
-凭证和日志必须放在 Release 目录之外，并限制可访问账号；这不是把当前用户设为只读。具体 ACL 和日志要求见 [Agent 通用安装说明](docs/agent-install.md)。`trustServerCertificate=true` 只适合没有可信证书的内部环境；部署可信证书后应改为 `false`。
+省略 `authentication` 时一律按 `sqlPassword` 处理，以兼容旧版配置且避免意外使用当前 AD 权限。切换到 Windows 集成认证时必须明确写入 `windowsIntegrated`，并同时清空账号和密码。
+
+本机配置和日志必须放在 Release 目录之外，并限制可访问账号；这不是把当前用户设为只读。SQL 密码模式的配置包含明文密码，Windows 集成模式不保存 AD 密码。具体 ACL 和日志要求见 [Agent 通用安装说明](docs/agent-install.md)。`trustServerCertificate=true` 只适合没有可信证书的内部环境；部署可信证书后应改为 `false`。
 
 ### 4. 接入 Agent
 
@@ -91,3 +93,4 @@ Windows x64 GitHub Release 由 [发布工作流](https://github.com/rhino7s/Publ
 - `canExecute=true` 只代表账号有权限，不代表存储过程只读。
 - MCP 不检查已授权存储过程内部的动态 SQL 或实际副作用。
 - 每位用户本地启动一个 `stdio` 进程；并发和连接池限制按进程计算。
+- `windowsIntegrated` 使用 MCP 进程的当前 Windows 身份，不接受配置中的 AD 用户名或密码；本项目只承诺在 Windows AD 环境使用该模式。

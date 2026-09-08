@@ -11,7 +11,7 @@ SQL Server 低权限身份是最终安全边界。默认使用专用 SQL Login�
 | `execute_sql` | 执行受限查询；允许变量、CTE、表变量和本地临时表。 |
 | `execute_procedure` | 执行当前账号已获对象级权限的单一静态存储过程调用。 |
 | `find_object` | 在明确数据库中定位 Table、View、SP 或 Function，并检查 SP 执行权限。 |
-| `find_object_references` | 搜索对象定义和可选 Job 中的静态文本命中候选。 |
+| `find_object_references` | 搜索对象定义和可选 Job 中的原始文本命中候选。 |
 | `get_object_details` | 读取对象字段、索引、参数、权限和定义片段。 |
 
 `find_object_references` 的结果可能包含注释、对象自身定义或其他非执行文字，也可能遗漏运行时拼接的动态 SQL；它不代表实际调用方、读取方、写入方或完整血缘。
@@ -21,7 +21,7 @@ SQL Server 低权限身份是最终安全边界。默认使用专用 SQL Login�
 - `execute_sql` 禁止持久化 DML/DDL、`EXEC`、动态 SQL、远程及 Ad Hoc 数据源、全局临时表和其他有副作用的语法；只允许本地临时对象写入。
 - 写入语句中的表别名和 CTE 名称不得使用 `#` 前缀（包括全角兼容写法），避免把持久化对象伪装成临时表。请使用普通别名，并直接指定实际的 `#本地临时表` 或 `@表变量` 作为写入目标；独立只读语句不受此命名限制。
 - `execute_procedure` 只接受一条静态命名调用，且三段名数据库必须与 `database` 参数一致。拒绝 `sys` 架构及 `sp_`、`xp_` 前缀的过程，不区分大小写，包括 `sp_executesql`、`sp_prepexec` 和游标动态执行入口；业务过程也不能使用这些保留名称。
-- 每个数据库参数只接受一个明确数据库，不接受数据库列表；工具不会枚举数据库或无目的抓取资料。
+- 每个数据库参数只接受一个明确数据库，不接受数据库列表。Agent 应按用户指定范围查询，禁止无目的枚举或大范围取数；这属于使用约定，SQL 分析器不会判断查询的业务目的，可读取范围仍由数据库权限控制。
 - MCP 不维护业务 SP 白名单。SQL Server 仍会拒绝账号没有权限的资料和过程。
 - MCP 使用的 Windows/AD 身份或 SQL Login 不得加入 `sysadmin`、`db_owner`、`db_ddladmin`，也不应取得数据库级 `GRANT EXECUTE`。
 
@@ -56,11 +56,11 @@ Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码�
 
 ## 运行行为
 
-- 默认查询超时 60 秒，最多返回 200 行、约 256 KB；单进程并发查询 2，连接池 4。
+- 按随包示例配置，查询超时 60 秒，最多返回 200 行、约 256 KB；单进程并发查询 2，连接池上限 2。
 - 可调范围和程序硬上限以配置 schema 为准；越界配置会导致启动失败，不会静默改值。
 - 截断结果会明确返回 `truncated` 和原因，不得视为完整资料。
 - 完整结果放在 `structuredContent`；`content.text` 只提供摘要或错误，避免重复占用上下文。
-- 本地 JSON Lines 日志默认保留 20 天，不记录密码、连接字符串、查询结果或对象定义。启用 SQL 文本日志前应评估业务资料风险。
+- 本地 JSON Lines 日志默认保留 20 天。随包示例配置关闭 SQL 文本记录；程序不主动记录连接凭证、完整查询结果或对象定义，但错误消息可能包含业务值，日志仍须限制访问。启用 SQL 文本记录前应评估业务资料风险。
 
 ## 开发与发布
 
@@ -73,6 +73,8 @@ dotnet test SqlServerReadonlyMcp.slnx --no-restore --no-build
 ```
 
 Linux/macOS 使用 `publish-all.sh`。发布结果位于被 Git 忽略的 `publish/<rid>`。
+
+从本机向 GitHub 推送本项目变更或发布新版时，一并运行 `publish-all.ps1`（Linux/macOS 使用 `publish-all.sh`），并确认本地发布成功。GitHub 推送和 Release 工作流本身不会更新本机的 `publish/<rid>`；此步骤也不会更新其他安装目录或重启正在运行的 MCP。
 
 Windows x64 GitHub Release 由 [发布工作流](https://github.com/rhino7s/Public-Skills/actions/workflows/release-sqlserver-readonly-mcp.yml) 自动建立。标签必须使用 `sqlserver-readonly-mcp-v<项目版本>`，例如 `sqlserver-readonly-mcp-v0.9.0`；标签版本必须与项目文件中的 `Version` 完全一致。带预发布后缀的版本（例如 `0.10.0-rc.1`）会发布为 Pre-release，且不会替代正式 Latest。云端工作流从标签提交构建、测试，并从全新暂存目录按固定白名单生成 ZIP，不使用开发机的 `publish/`、日志或本地配置。
 

@@ -113,7 +113,9 @@ NTFS ACL 是限制访问账号，不是把文件设为“只读”，也不能�
 | Command | `sqlserver-readonly-mcp.exe` 展开后的绝对路径 |
 | Args | `--config`、`appsettings.local.json` 展开后的绝对路径，作为两个独立参数 |
 
-重新加载 Agent 后，确认只能看到身份表中的 5 个工具。数据库连接验证必须由用户指定数据库和对象，并使用低成本只读操作；不要枚举数据库、对象或执行大范围查询。Windows 集成模式必须由实际 MCP Windows 身份直接运行 `check-access.sql` 的 `currentSession` 模式，并确认返回的 LoginName 是启动 Agent 的当前 AD 用户；不得尝试模拟 AD 群组。
+重新加载 Agent 后，确认 `sqlserver-readonly` 服务恰好提供身份表中的 5 个工具；其他 MCP 服务的工具不在此检查范围内。数据库连接验证必须由用户指定数据库和对象，并使用低成本只读操作；不要枚举数据库、对象或执行大范围查询。
+
+Windows 集成模式必须由实际 MCP Windows 身份使用 SQL 客户端（如 SSMS）运行 `check-access.sql` 的 `currentSession` 模式，并确认返回的 LoginName 与该身份一致；不得尝试模拟 AD 群组。该脚本含内部动态 SQL，不能通过本服务的 `execute_sql` 运行。完整权限检查会遍历数据库，应作为单独的管理员权限核验步骤，不作为普通安装连通性测试。
 
 ## 其他平台
 
@@ -132,5 +134,5 @@ chmod 600 /absolute/path/appsettings.local.json
 先完整阅读并严格执行：
 https://github.com/rhino7s/Public-Skills/blob/main/sqlserver-readonly-mcp/docs/agent-install.md
 
-若来源、文件、配置格式或工具列表与文档不符，立即停止。默认使用 sqlPassword；凭证只能由用户在本机填写，不得要求发送到聊天或回显。只有管理员已确认 AD 权限时才能明确切换到 windowsIntegrated，且不得索取 AD 密码。
+若来源、文件、配置格式或工具列表与文档不符，立即停止。凭证只能由用户在本机填写，不得要求发送到聊天或回显。
 ```

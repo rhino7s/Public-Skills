@@ -19,7 +19,8 @@ SQL Server 低权限身份是最终安全边界。默认使用专用 SQL Login�
 ## 安全边界
 
 - `execute_sql` 禁止持久化 DML/DDL、`EXEC`、动态 SQL、远程及 Ad Hoc 数据源、全局临时表和其他有副作用的语法；只允许本地临时对象写入。
-- `execute_procedure` 只接受一条静态命名调用，且三段名数据库必须与 `database` 参数一致。
+- 写入语句中的表别名和 CTE 名称不得使用 `#` 前缀（包括全角兼容写法），避免把持久化对象伪装成临时表。请使用普通别名，并直接指定实际的 `#本地临时表` 或 `@表变量` 作为写入目标；独立只读语句不受此命名限制。
+- `execute_procedure` 只接受一条静态命名调用，且三段名数据库必须与 `database` 参数一致。拒绝 `sys` 架构及 `sp_`、`xp_` 前缀的过程，不区分大小写，包括 `sp_executesql`、`sp_prepexec` 和游标动态执行入口；业务过程也不能使用这些保留名称。
 - 每个数据库参数只接受一个明确数据库，不接受数据库列表；工具不会枚举数据库或无目的抓取资料。
 - MCP 不维护业务 SP 白名单。SQL Server 仍会拒绝账号没有权限的资料和过程。
 - MCP 使用的 Windows/AD 身份或 SQL Login 不得加入 `sysadmin`、`db_owner`、`db_ddladmin`，也不应取得数据库级 `GRANT EXECUTE`。

@@ -290,6 +290,25 @@ public sealed class McpProtocolSmokeTests : IDisposable
             "必须与 database 参数一致",
             rejectedProcedureDatabaseContent.GetProperty("error").GetProperty("message").GetString(),
             StringComparison.Ordinal);
+
+        // The configured host is invalid: safety_rejection proves these requests
+        // are rejected before trying to connect, through the actual MCP transport.
+        foreach (var (tool, sql) in new[]
+                 {
+                     ("execute_sql", "UPDATE [#x] SET value = 1 FROM dbo.PersistentTable AS [#x];"),
+                     ("execute_sql", "WITH [#x] AS (SELECT * FROM dbo.PersistentTable) DELETE FROM [#x];"),
+                     ("execute_procedure", "EXEC sys.sp_prepexec NULL, NULL, N'SELECT 1';"),
+                     ("execute_procedure", "EXEC sp_cursoropen NULL, N'SELECT 1';"),
+                 })
+        {
+            var rejected = await client.CallToolAsync(
+                tool,
+                new Dictionary<string, object?> { ["sql"] = sql, ["database"] = "ExampleDatabase" },
+                cancellationToken: cancellationToken);
+            Assert.True(rejected.IsError);
+            var content = Assert.NotNull(rejected.StructuredContent);
+            Assert.Equal("safety_rejection", content.GetProperty("error").GetProperty("category").GetString());
+        }
     }
 
     private static void AssertRequiredPropertiesPresent(JsonElement schema, JsonElement content)

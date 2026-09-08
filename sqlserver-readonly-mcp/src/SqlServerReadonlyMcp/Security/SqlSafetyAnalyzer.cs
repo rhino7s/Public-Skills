@@ -116,6 +116,17 @@ public sealed class SqlSafetyAnalyzer
             return SqlSafetyResult.Rejected("sp_executesql_not_allowed", "禁止通过 sp_executesql 执行动态 SQL。");
         }
 
+        // System entry points also include prepared statements, cursors and extended
+        // procedures. Reserve their namespaces instead of enumerating SQL executors.
+        if (string.Equals(name.SchemaIdentifier?.Value, "sys", StringComparison.OrdinalIgnoreCase) ||
+            name.BaseIdentifier?.Value.StartsWith("sp_", StringComparison.OrdinalIgnoreCase) == true ||
+            name.BaseIdentifier?.Value.StartsWith("xp_", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return SqlSafetyResult.Rejected(
+                "system_procedure_not_allowed",
+                "禁止调用 sys 架构或名称以 sp_/xp_ 开头的过程；只允许已审核并单独授权的业务存储过程。");
+        }
+
         return SqlSafetyResult.Allowed();
     }
 
@@ -165,6 +176,22 @@ public sealed class SqlSafetyAnalyzer
             if (Rejection is not null)
             {
                 return;
+            }
+
+            if (node is DataModificationStatement)
+            {
+                // A #name target can bind to a FROM alias or CTE instead of a temp
+                // table. Reserve that prefix in this statement's bindings, including
+                // derived tables and nested sources; do not guess database collation.
+                var bindings = new TemporaryNameBindingVisitor();
+                node.Accept(bindings);
+                if (bindings.HasTemporaryNameBinding)
+                {
+                    Rejection = SqlSafetyResult.Rejected(
+                        "temporary_name_binding_not_allowed",
+                        "写入语句中的表别名和 CTE 名称不得以 # 开头；请改用普通名称，并直接指定实际的 #本地临时表或 @表变量作为写入目标。");
+                    return;
+                }
             }
 
             switch (node)
@@ -363,6 +390,25 @@ public sealed class SqlSafetyAnalyzer
             statementName.StartsWith("EndConversation", StringComparison.Ordinal) ||
             statementName.StartsWith("MoveConversation", StringComparison.Ordinal) ||
             statementName.StartsWith("GetConversation", StringComparison.Ordinal);
+    }
+
+    private sealed class TemporaryNameBindingVisitor : TSqlFragmentVisitor
+    {
+        public bool HasTemporaryNameBinding { get; private set; }
+
+        public override void Visit(TableReferenceWithAlias node) => CheckName(node.Alias);
+
+        public override void Visit(CommonTableExpression node) => CheckName(node.ExpressionName);
+
+        private void CheckName(Identifier? name)
+        {
+            // Also reserve full-width compatibility spellings of the # prefix.
+            if (name?.Value.Normalize(System.Text.NormalizationForm.FormKC)
+                    .StartsWith("#", StringComparison.Ordinal) == true)
+            {
+                HasTemporaryNameBinding = true;
+            }
+        }
     }
 
     private sealed record ParseResult(TSqlFragment? Fragment, SqlSafetyResult? Error);

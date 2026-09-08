@@ -31,7 +31,7 @@ public sealed class SqlServerTools
         OutputSchemaType = typeof(QueryResult))]
     [Description(
         "执行受限查询以核对资料或业务逻辑。应指定字段并使用 WHERE、聚合或较小的 TOP 控制范围；" +
-        "允许变量、CTE、跨库三段名，以及对本地临时表或表变量写入；" +
+        "允许变量、CTE、跨库三段名，以及对本地临时表或表变量写入；写入语句中的表别名和 CTE 名称不得以 # 开头；" +
         "禁止持久化 DML、嵌套 DML 数据源、DDL、USE、EXEC/EXECUTE（包括 INSERT ... EXEC）、NEXT VALUE FOR、全局临时表，" +
         "以及四段名、OPENQUERY、OPENROWSET、OPENDATASOURCE 等显式远程或 Ad Hoc 数据源。" +
         "精确核对不默认使用 NOLOCK。")]
@@ -64,7 +64,7 @@ public sealed class SqlServerTools
     [Description(
         "执行一条静态命名、已审核且当前账号 canExecute=true 的存储过程调用。" +
         "过程可能修改资料，仅在用户明确要求对应业务动作时使用；" +
-        "禁止动态 SQL、变量过程名、sp_executesql、EXECUTE AS、四段名和远程执行；三段名中的数据库必须与 database 参数一致。")]
+        "禁止动态 SQL、变量过程名、sys 架构及 sp_/xp_ 前缀的过程（包括 sp_executesql、sp_prepexec）、EXECUTE AS、四段名和远程执行；三段名中的数据库必须与 database 参数一致。")]
     public async Task<CallToolResult> ExecuteProcedureAsync(
         [Description("单条存储过程调用，例如 EXEC dbo.ExampleProcedure 'a', 1；使用 database.schema.procedure 时，数据库必须与 database 参数一致。")]
         string sql,

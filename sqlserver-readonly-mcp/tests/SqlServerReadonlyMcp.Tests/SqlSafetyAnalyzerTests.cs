@@ -81,6 +81,40 @@ public sealed class SqlSafetyAnalyzerTests
         Assert.Equal("persistent_write_not_allowed", result.Code);
     }
 
+    [Theory]
+    [InlineData("UPDATE [#x] SET value = 1 FROM dbo.PersistentTable AS [#x];")]
+    [InlineData("DELETE [#x] FROM dbo.PersistentTable AS [#x];")]
+    [InlineData("UPDATE #X SET value = 1 FROM dbo.PersistentTable AS #x;")]
+    [InlineData("UPDATE \"#x\" SET value = 1 FROM dbo.PersistentTable AS \"#x\";")]
+    [InlineData("UPDATE [#x] SET value = 1 FROM (SELECT value FROM dbo.PersistentTable) AS [#x];")]
+    [InlineData("UPDATE [#x] SET value = 1 FROM dbo.PersistentTable AS [＃x];")]
+    [InlineData("WITH [#x] AS (SELECT * FROM dbo.PersistentTable) UPDATE [#x] SET value = 1;")]
+    [InlineData("WITH [#x] AS (SELECT * FROM dbo.PersistentTable) DELETE FROM [#x];")]
+    [InlineData("WITH [#x] AS (SELECT * FROM dbo.PersistentTable) INSERT INTO [#x] (id) VALUES (1);")]
+    [InlineData("WITH [#x] AS (SELECT * FROM dbo.PersistentTable) MERGE [#x] AS target USING #source AS source ON target.id = source.id WHEN MATCHED THEN UPDATE SET value = source.value;")]
+    [InlineData("WITH [#x] AS (SELECT * FROM dbo.PersistentTable) DELETE [#x] FROM [#x] JOIN #work AS w ON [#x].id = w.id;")]
+    [InlineData("IF 1 = 1 BEGIN DELETE [#x] FROM dbo.PersistentTable AS [#x]; END;")]
+    public void RejectsTemporaryNamesUsedAsWriteBindings(string sql)
+    {
+        var result = _analyzer.Analyze(sql);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal("temporary_name_binding_not_allowed", result.Code);
+    }
+
+    [Theory]
+    [InlineData("UPDATE #work SET value = source.value FROM #work JOIN dbo.PersistentTable AS source ON #work.id = source.id;")]
+    [InlineData("WITH source AS (SELECT id FROM dbo.PersistentTable) INSERT INTO #work (id) SELECT id FROM source;")]
+    [InlineData("MERGE #work AS target USING dbo.PersistentTable AS source ON target.id = source.id WHEN MATCHED THEN UPDATE SET value = source.value;")]
+    [InlineData("SELECT [#x].id FROM dbo.PersistentTable AS [#x]; UPDATE #work SET value = 1;")]
+    [InlineData("WITH [#x] AS (SELECT id FROM dbo.PersistentTable) SELECT id FROM [#x]; UPDATE #work SET value = 1;")]
+    public void AllowsDirectTemporaryWritesAndIndependentReadBindings(string sql)
+    {
+        var result = _analyzer.Analyze(sql);
+
+        Assert.True(result.IsAllowed, result.Message);
+    }
+
     [Fact]
     public void RejectsDatabaseSwitch()
     {
@@ -206,6 +240,25 @@ public sealed class SqlSafetyAnalyzerTests
 
         Assert.False(result.IsAllowed);
         Assert.Equal(expectedCode, result.Code);
+    }
+
+    [Theory]
+    [InlineData("EXEC sys.sp_prepexec NULL, NULL, N'SELECT 1';")]
+    [InlineData("EXEC sp_prepare NULL, NULL, N'SELECT 1';")]
+    [InlineData("EXEC dbo.sp_execute 1;")]
+    [InlineData("EXEC [ExampleDatabase]..[SP_PREPEXEC] NULL, NULL, N'SELECT 1';")]
+    [InlineData("EXEC sp_cursoropen NULL, N'SELECT 1';")]
+    [InlineData("EXEC sp_cursorprepexec NULL, NULL, NULL, N'SELECT 1';")]
+    [InlineData("EXEC sp_MSforeachtable N'SELECT 1';")]
+    [InlineData("EXEC xp_execresultset N'SELECT 1', N'ExampleDatabase';")]
+    [InlineData("EXEC [dbo].[XP_CMDSHELL] N'echo test';")]
+    [InlineData("EXEC [SYS].[OtherProcedure];")]
+    public void RejectsSystemProcedureNamespaces(string sql)
+    {
+        var result = _analyzer.AnalyzeProcedureCall(sql, "ExampleDatabase");
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal("system_procedure_not_allowed", result.Code);
     }
 
     [Theory]

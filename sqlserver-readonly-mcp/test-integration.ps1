@@ -53,10 +53,45 @@ if (-not $hasReferenceCase -and -not $hasDetailsCase) {
 
 $configPath = (Resolve-Path -LiteralPath $Config -ErrorAction Stop).Path
 $testProject = Join-Path $PSScriptRoot 'tests/SqlServerReadonlyMcp.Tests/SqlServerReadonlyMcp.Tests.csproj'
+$platform = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+    'win'
+}
+elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) {
+    'linux'
+}
+elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::OSX)) {
+    'osx'
+}
+else {
+    throw '集成测试不支持当前操作系统。'
+}
+$runtimeIdentifier = "$platform-$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant())"
+if ($runtimeIdentifier -notin @('win-x64', 'linux-x64', 'osx-x64', 'osx-arm64')) {
+    throw "集成测试不支持当前平台：$runtimeIdentifier"
+}
+$publishDirectory = Join-Path $PSScriptRoot "publish/$runtimeIdentifier"
+$executableName = if ($platform -eq 'win') { 'sqlserver-readonly-mcp.exe' } else { 'sqlserver-readonly-mcp' }
+$executablePath = Join-Path $publishDirectory $executableName
+
+# Always rebuild the artifact under test; never fall back to an old EXE or test DLL.
+& dotnet publish (Join-Path $PSScriptRoot 'src/SqlServerReadonlyMcp/SqlServerReadonlyMcp.csproj') `
+    --configuration Release --runtime $runtimeIdentifier --self-contained true `
+    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    --output $publishDirectory
+if ($LASTEXITCODE -ne 0) {
+    throw '本地发布失败，禁止使用旧程序继续测试。'
+}
+$executablePath = (Resolve-Path -LiteralPath $executablePath -ErrorAction Stop).Path
+Write-Host "测试发布程序：$executablePath"
+Write-Host "测试配置文件：$configPath"
+Write-Host "发布程序 SHA-256：$((Get-FileHash -LiteralPath $executablePath -Algorithm SHA256).Hash)"
+$queryDatabase = if ($hasReferenceCase) { $TargetDatabase } else { [string]$detailsSettings.database }
 $actualIncludeJobs = $IncludeJobs.IsPresent -or $referenceSettings.includeJobs -eq $true
 $actualRequireReference = $RequireReference.IsPresent -or $referenceSettings.requireReference -eq $true
 $variables = [ordered]@{
     SQLSERVER_MCP_INTEGRATION_CONFIG = $configPath
+    SQLSERVER_MCP_INTEGRATION_EXE = $executablePath
+    SQLSERVER_MCP_INTEGRATION_QUERY_DATABASE = $queryDatabase
     SQLSERVER_MCP_INTEGRATION_TARGET_DATABASE = $TargetDatabase
     SQLSERVER_MCP_INTEGRATION_TARGET_OBJECT = $TargetObject
     SQLSERVER_MCP_INTEGRATION_SEARCH_DATABASE = $SearchDatabase

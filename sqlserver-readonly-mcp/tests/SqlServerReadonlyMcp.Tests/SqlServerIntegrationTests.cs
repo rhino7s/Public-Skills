@@ -10,6 +10,8 @@ namespace SqlServerReadonlyMcp.Tests;
 public sealed class SqlServerIntegrationTests
 {
     private const string ConfigVariable = "SQLSERVER_MCP_INTEGRATION_CONFIG";
+    private const string ExecutableVariable = "SQLSERVER_MCP_INTEGRATION_EXE";
+    private const string QueryDatabaseVariable = "SQLSERVER_MCP_INTEGRATION_QUERY_DATABASE";
     private const string TargetDatabaseVariable = "SQLSERVER_MCP_INTEGRATION_TARGET_DATABASE";
     private const string TargetObjectVariable = "SQLSERVER_MCP_INTEGRATION_TARGET_OBJECT";
     private const string SearchDatabaseVariable = "SQLSERVER_MCP_INTEGRATION_SEARCH_DATABASE";
@@ -31,6 +33,34 @@ public sealed class SqlServerIntegrationTests
 
     public static bool IsAccessCheckConfigured =>
         OptionalEnvironmentVariable(ConfigVariable) is not null;
+
+    public static bool IsQueryConfigured =>
+        OptionalEnvironmentVariable(ConfigVariable) is not null &&
+        OptionalEnvironmentVariable(QueryDatabaseVariable) is not null;
+
+    [Fact(
+        Timeout = 60_000,
+        Skip = "未配置真实库查询测试。",
+        SkipUnless = nameof(IsQueryConfigured))]
+    public async Task RealServerExecutesReadOnlyQuery()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var transport = CreateTransport(RequiredEnvironmentVariable(ConfigVariable), "sqlserver-readonly-mcp-query-integration");
+        await using var client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
+        var result = await client.CallToolAsync(
+            "execute_sql",
+            new Dictionary<string, object?>
+            {
+                ["database"] = RequiredEnvironmentVariable(QueryDatabaseVariable),
+                ["sql"] = "SELECT CAST(1 AS int) AS connection_probe;",
+            },
+            cancellationToken: cancellationToken);
+        var content = Assert.NotNull(result.StructuredContent);
+        AssertToolSucceeded(result, content);
+        Assert.False(content.GetProperty("truncated").GetBoolean());
+        Assert.Equal(1, content.GetProperty("returnedRows").GetInt32());
+        Assert.Equal(1, content.GetProperty("resultSets")[0].GetProperty("rows")[0][0].GetInt32());
+    }
 
     [Fact(
         Timeout = 180_000,
@@ -252,15 +282,26 @@ public sealed class SqlServerIntegrationTests
             cancellationToken);
     }
 
-    private static StdioClientTransport CreateTransport(string configPath, string name) => new(
-        new StdioClientTransportOptions
+    private static StdioClientTransport CreateTransport(string configPath, string name)
+    {
+        var executable = OptionalEnvironmentVariable(ExecutableVariable);
+        if (executable is not null)
+        {
+            Assert.True(Path.IsPathFullyQualified(executable) && File.Exists(executable),
+                "集成测试指定的发布程序不存在或不是绝对路径；禁止回退到测试程序集。");
+        }
+
+        return new StdioClientTransport(new StdioClientTransportOptions
         {
             Name = name,
-            Command = "dotnet",
-            Arguments = [typeof(SqlServerReadonlyMcp.Program).Assembly.Location, "--config", configPath],
+            Command = executable ?? "dotnet",
+            Arguments = executable is null
+                ? [typeof(SqlServerReadonlyMcp.Program).Assembly.Location, "--config", configPath]
+                : ["--config", configPath],
             WorkingDirectory = Path.GetDirectoryName(configPath),
             ShutdownTimeout = TimeSpan.FromSeconds(5),
         });
+    }
 
     private static async Task AssertDefinitionPaginationAsync(
         McpClient client,

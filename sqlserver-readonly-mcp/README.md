@@ -65,16 +65,16 @@ Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码�
 ## 开发与发布
 
 ```powershell
+.\check-public-repo.ps1
 dotnet restore SqlServerReadonlyMcp.slnx
 dotnet build SqlServerReadonlyMcp.slnx --no-restore
-dotnet test SqlServerReadonlyMcp.slnx --no-restore --no-build
-.\check-public-repo.ps1
 .\publish-all.ps1
+dotnet test SqlServerReadonlyMcp.slnx --no-restore --no-build
 ```
 
 Linux/macOS 使用 `publish-all.sh`。发布结果位于被 Git 忽略的 `publish/<rid>`。
 
-从本机向 GitHub 推送本项目变更或发布新版时，一并运行 `publish-all.ps1`（Linux/macOS 使用 `publish-all.sh`），并确认本地发布成功。GitHub 推送和 Release 工作流本身不会更新本机的 `publish/<rid>`；此步骤也不会更新其他安装目录或重启正在运行的 MCP。
+从本机向 GitHub 推送本项目变更或发布新版时，先运行 `publish-all.ps1`（Linux/macOS 使用 `publish-all.sh`），确认本地发布成功，再完成测试及发布产物验证，最后推送或发布。GitHub 推送和 Release 工作流本身不会更新本机的 `publish/<rid>`；此步骤也不会更新其他安装目录或重启正在运行的 MCP。
 
 Windows x64 GitHub Release 由 [发布工作流](https://github.com/rhino7s/Public-Skills/actions/workflows/release-sqlserver-readonly-mcp.yml) 自动建立。标签必须使用 `sqlserver-readonly-mcp-v<项目版本>`，例如 `sqlserver-readonly-mcp-v0.9.0`；标签版本必须与项目文件中的 `Version` 完全一致。带预发布后缀的版本（例如 `0.10.0-rc.1`）会发布为 Pre-release，且不会替代正式 Latest。云端工作流从标签提交构建、测试，并从全新暂存目录按固定白名单生成 ZIP，不使用开发机的 `publish/`、日志或本地配置。
 
@@ -88,7 +88,9 @@ Windows x64 GitHub Release 由 [发布工作流](https://github.com/rhino7s/Publ
 .\test-integration.ps1
 ```
 
-调试 MCP 协议可运行 `start-inspector.ps1` 或 `start-inspector.sh`；Inspector 只应在本机使用。
+Inspector 使用 `publish/<rid>` 下的程序和项目内的 `appsettings.local.json`。验证本地发布程序及配置时，应先断开 Inspector 并停止由它启动的旧服务进程，完成本地发布，再通过 `start-inspector.ps1` 或 `start-inspector.sh` 启动并重新连接，确认工具列表及用户指定的低成本只读查询。不得用仍在运行的旧进程作为新版验证结果；Inspector 只应在本机使用。
+
+普通自动协议测试启动的是测试构建中的程序集。`test-integration.ps1` 则先重新发布当前平台程序，再通过 `publish/<rid>` 中的程序和指定的本机配置测试 MCP，包括 `execute_sql` 的低成本连接查询；发布失败立即停止，不回退到旧程序。脚本输出被测程序路径、SHA-256 和配置路径，便于核对测试范围。测试通过仅适用于该程序和该配置，不能代表其他配置或进程也能连接。
 
 ## 已知限制
 

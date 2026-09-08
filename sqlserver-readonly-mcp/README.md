@@ -48,7 +48,7 @@ Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码�
 
 省略 `authentication` 时一律按 `sqlPassword` 处理，以兼容旧版配置且避免意外使用当前 AD 权限。切换到 Windows 集成认证时必须明确写入 `windowsIntegrated`，并同时清空账号和密码。
 
-本机配置和日志必须放在 Release 目录之外，并限制可访问账号；这不是把当前用户设为只读。SQL 密码模式的配置包含明文密码，Windows 集成模式不保存 AD 密码。具体 ACL 和日志要求见 [Agent 通用安装说明](docs/agent-install.md)。`trustServerCertificate=true` 只适合没有可信证书的内部环境；部署可信证书后应改为 `false`。
+本机配置和日志必须放在 Release 目录之外，并限制可访问账号；这不是把当前用户设为只读。SQL 密码模式的配置包含明文密码，Windows 集成模式不保存 AD 密码。具体 ACL 和日志要求见 [Agent 通用安装说明](docs/agent-install.md)。
 
 ### 4. 接入 Agent
 

@@ -58,7 +58,7 @@ if ($actualHash -ne $expectedHash) { throw 'Release ZIP 的 SHA-256 校验失败
   "password": "",
   "defaultDatabase": "ExampleDatabase",
   "encrypt": true,
-  "trustServerCertificate": false,
+  "trustServerCertificate": true,
   "connectTimeoutSeconds": 10,
   "maxPoolSize": 2
 }

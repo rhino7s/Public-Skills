@@ -15,13 +15,13 @@ public sealed class SqlConnectionFactoryTests
             Server = "sql.internal",
             Username = string.Empty,
             Password = string.Empty,
-            DefaultDatabase = "ExampleDatabase",
         };
 
-        var connectionString = SqlConnectionFactory.BuildConnectionString(settings);
+        var connectionString = SqlConnectionFactory.BuildConnectionString(settings, "ExampleDatabase");
         var builder = new SqlConnectionStringBuilder(connectionString);
 
         Assert.True(builder.IntegratedSecurity);
+        Assert.Equal("ExampleDatabase", builder.InitialCatalog);
         Assert.Empty(builder.UserID);
         Assert.Empty(builder.Password);
         Assert.DoesNotContain("User ID=", connectionString, StringComparison.OrdinalIgnoreCase);
@@ -37,13 +37,13 @@ public sealed class SqlConnectionFactoryTests
             Server = "sql.internal",
             Username = "readonly_test",
             Password = "not-a-real-secret",
-            DefaultDatabase = "ExampleDatabase",
         };
 
-        var connectionString = SqlConnectionFactory.BuildConnectionString(settings);
+        var connectionString = SqlConnectionFactory.BuildConnectionString(settings, "ExampleDatabase");
         var builder = new SqlConnectionStringBuilder(connectionString);
 
         Assert.False(builder.IntegratedSecurity);
+        Assert.Equal("ExampleDatabase", builder.InitialCatalog);
         Assert.Equal("readonly_test", builder.UserID);
         Assert.Equal("not-a-real-secret", builder.Password);
     }
@@ -59,9 +59,48 @@ public sealed class SqlConnectionFactoryTests
         };
 
         var builder = new SqlConnectionStringBuilder(
-            SqlConnectionFactory.BuildConnectionString(settings));
+            SqlConnectionFactory.BuildConnectionString(settings, "ExampleDatabase"));
 
         Assert.False(builder.IntegratedSecurity);
         Assert.Equal("readonly_test", builder.UserID);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task MissingTargetIsRejectedBeforeConnection(string? database)
+    {
+        var factory = new SqlConnectionFactory(new McpSettings());
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => factory.OpenAsync(database!, CancellationToken.None));
+    }
+
+    [Fact]
+    public void EachTargetIsExplicitAndCannotInjectConnectionOptions()
+    {
+        var settings = new ConnectionSettings { Server = "test.invalid", Authentication = "windowsIntegrated" };
+        var first = new SqlConnectionStringBuilder(SqlConnectionFactory.BuildConnectionString(settings, "CatalogOne"));
+        var second = new SqlConnectionStringBuilder(SqlConnectionFactory.BuildConnectionString(settings, "CatalogTwo;Integrated Security=false"));
+        Assert.Equal("CatalogOne", first.InitialCatalog);
+        Assert.Equal("CatalogTwo;Integrated Security=false", second.InitialCatalog);
+        Assert.True(second.IntegratedSecurity);
+    }
+
+    [Fact]
+    public void LegacyDefaultDatabaseIsIgnoredByLoader()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "legacy-catalog-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            File.WriteAllText(path, """
+                { "connection": { "server": "test.invalid", "authentication": "windowsIntegrated",
+                  "defaultDatabase": "MustNotBeUsed" } }
+                """);
+            var settings = SettingsLoader.Load(path);
+            var connection = new SqlConnectionStringBuilder(SqlConnectionFactory.BuildConnectionString(settings.Connection, "RequestedCatalog"));
+            Assert.Equal("RequestedCatalog", connection.InitialCatalog);
+            Assert.DoesNotContain("MustNotBeUsed", connection.ConnectionString);
+        }
+        finally { File.Delete(path); }
     }
 }

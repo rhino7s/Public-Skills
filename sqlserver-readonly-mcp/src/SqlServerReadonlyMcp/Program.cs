@@ -9,6 +9,7 @@ using SqlServerReadonlyMcp.Configuration;
 using SqlServerReadonlyMcp.Logging;
 using SqlServerReadonlyMcp.Security;
 using SqlServerReadonlyMcp.Sql;
+using SqlServerReadonlyMcp.Tools;
 
 namespace SqlServerReadonlyMcp;
 
@@ -44,11 +45,23 @@ public static class Program
             builder.Services.AddSingleton<QueryConcurrencyGate>();
             builder.Services.AddSingleton<SqlQueryService>();
             builder.Services.AddSingleton<SqlMetadataService>();
+            builder.Services.AddSingleton<ICapabilityStore, CapabilityStore>();
+            builder.Services.AddSingleton<CapabilityService>();
             var toolJsonOptions = CreateToolJsonOptions();
-            builder.Services
-                .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Text)
+            var mcp = builder.Services
+                .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Text +
+                    (settings.Capabilities.Enabled ? "\n\n开始业务操作前读取 list_capabilities 并遵守返回的业务说明；分页未结束时继续读取。收到用户没有访问权限后停止调用本 MCP，不尝试其他工具路径。" : string.Empty))
                 .WithStdioServerTransport()
-                .WithToolsFromAssembly(serializerOptions: toolJsonOptions);
+                .WithTools<SqlServerTools>(serializerOptions: toolJsonOptions)
+                .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
+                {
+                    var capabilities = context.Services?.GetService<CapabilityService>();
+                    if (capabilities is null || !await capabilities.CanAccessAsync(cancellationToken).ConfigureAwait(false))
+                        return CapabilityService.Denied();
+                    return await next(context, cancellationToken).ConfigureAwait(false);
+                }));
+            if (settings.Capabilities.Enabled)
+                mcp.WithTools<CapabilityTools>(serializerOptions: toolJsonOptions);
 
             await builder.Build().RunAsync().ConfigureAwait(false);
             return 0;

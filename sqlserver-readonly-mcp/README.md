@@ -56,13 +56,15 @@ Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码�
 
 ## 运行行为
 
-- 按随包示例配置，查询超时 60 秒，最多返回 200 行、约 256 KB；单进程并发查询 2，连接池上限 2。
+- 按随包示例配置，查询超时 60 秒，最多返回 200 行、约 256 KB；所有工具共享单进程数据库操作并发上限 2，每个目标数据库连接池上限 2，连接按需创建。
 - 可调范围和程序硬上限以配置 schema 为准；越界配置会导致启动失败，不会静默改值。
 - 截断结果会明确返回 `truncated` 和原因，不得视为完整资料。
 - 完整结果放在 `structuredContent`；`content.text` 只提供摘要或错误，避免重复占用上下文。
 - 本地 JSON Lines 日志默认保留 20 天。随包示例配置关闭 SQL 文本记录；程序不主动记录连接凭证、完整查询结果或对象定义，但错误消息可能包含业务值，日志仍须限制访问。启用 SQL 文本记录前应评估业务资料风险。
 
 ## 开发与发布
+
+源码已支持可选用户能力目录，见 [配置及使用说明](docs/capabilities.md)、[实施方案](docs/capabilities-plan.md)、[函数脚本](docs/create-capabilities-functions.sql) 和 [管理员权限核查](docs/check-capability-permissions.sql)。未配置时维持原有五项工具；功能尚待实际环境联调，不代表现有 Release 已包含此变更。
 
 ```powershell
 .\check-public-repo.ps1
@@ -97,5 +99,5 @@ Inspector 使用 `publish/<rid>` 下的程序和项目内的 `appsettings.local.
 - 加密模块无法读取定义。
 - `canExecute=true` 只代表账号有权限，不代表存储过程只读。
 - MCP 不检查已授权存储过程内部的动态 SQL 或实际副作用。
-- 每位用户本地启动一个 `stdio` 进程；并发和连接池限制按进程计算。
+- 每位用户本地启动一个 `stdio` 进程；`maxConcurrentQueries` 限制该进程所有工具的并发数据库操作，`maxPoolSize` 限制每个目标数据库连接字符串对应的连接池。以不同数据库为连接目标时会建立多个池，进程保留的总连接数可能超过 `maxPoolSize`；单条查询使用三段名跨库访问本身不会额外建池。
 - `windowsIntegrated` 使用 MCP 进程的当前 Windows 身份，不接受配置中的 AD 用户名或密码；本项目只承诺在 Windows AD 环境使用该模式。

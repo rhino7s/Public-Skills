@@ -11,6 +11,7 @@ public static class SettingsValidator
         var errors = new List<string>();
         Required(settings.Connection.Server, "connection.server", errors);
         ValidateAuthentication(settings.Connection, errors);
+        ValidateCapabilities(settings, errors);
         Range(settings.Connection.ConnectTimeoutSeconds, 1, 30, "connection.connectTimeoutSeconds", errors);
         Range(settings.Connection.MaxPoolSize, 1, 8, "connection.maxPoolSize", errors);
         Range(settings.Query.TimeoutSeconds, 1, 120, "query.timeoutSeconds", errors);
@@ -35,6 +36,30 @@ public static class SettingsValidator
         {
             throw new SettingsException("配置验证失败：" + string.Join(" ", errors));
         }
+    }
+
+    private static void ValidateCapabilities(McpSettings settings, ICollection<string> errors)
+    {
+        if (settings.Capabilities is null)
+        {
+            errors.Add("capabilities 必须是配置对象，不可为 null。");
+            return;
+        }
+        var capabilities = settings.Capabilities;
+        // Leave room for the extra row used to detect the next page.
+        Range(capabilities.PageSize, 1, int.MaxValue - 1, "capabilities.pageSize", errors);
+        foreach (var (name, value) in new[] { ("listFunction", capabilities.ListFunction), ("checkFunction", capabilities.CheckFunction) })
+        {
+            if (value is null) { errors.Add($"capabilities.{name} 不可为 null。"); continue; }
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            try { _ = CapabilityFunctionName.Parse(value); }
+            catch (ArgumentException) { errors.Add($"capabilities.{name} 必须是合法的 database.dbo.function 三段名称。"); }
+        }
+        if (!capabilities.Enabled && !string.IsNullOrWhiteSpace(capabilities.CheckFunction))
+            errors.Add("capabilities.checkFunction 不得单独配置。");
+        if (capabilities.Enabled && ConnectionAuthenticationModes.Resolve(settings.Connection) == ConnectionAuthenticationModes.WindowsIntegrated
+            && string.IsNullOrWhiteSpace(capabilities.CheckFunction))
+            errors.Add("Windows 集成认证启用目录时必须配置 capabilities.checkFunction。");
     }
 
     private static void ValidateAuthentication(ConnectionSettings settings, ICollection<string> errors)

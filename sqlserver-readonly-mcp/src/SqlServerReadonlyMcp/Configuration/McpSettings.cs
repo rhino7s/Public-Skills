@@ -7,6 +7,16 @@ public sealed class McpSettings
     public QuerySettings Query { get; init; } = new();
 
     public LoggingSettings Logging { get; init; } = new();
+
+    public CapabilitySettings Capabilities { get; init; } = new();
+}
+
+public sealed class CapabilitySettings
+{
+    public string ListFunction { get; init; } = string.Empty;
+    public string CheckFunction { get; init; } = string.Empty;
+    public int PageSize { get; init; } = 100;
+    public bool Enabled => !string.IsNullOrWhiteSpace(ListFunction);
 }
 
 public sealed class ConnectionSettings
@@ -18,8 +28,6 @@ public sealed class ConnectionSettings
     public string Username { get; init; } = string.Empty;
 
     public string Password { get; init; } = string.Empty;
-
-    public string DefaultDatabase { get; init; } = string.Empty;
 
     public bool Encrypt { get; init; } = true;
 

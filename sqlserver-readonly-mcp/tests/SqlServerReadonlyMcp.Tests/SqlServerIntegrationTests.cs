@@ -32,7 +32,8 @@ public sealed class SqlServerIntegrationTests
         OptionalEnvironmentVariable(DetailsSearchVariable) is not null;
 
     public static bool IsAccessCheckConfigured =>
-        OptionalEnvironmentVariable(ConfigVariable) is not null;
+        OptionalEnvironmentVariable(ConfigVariable) is not null &&
+        OptionalEnvironmentVariable(QueryDatabaseVariable) is not null;
 
     public static bool IsQueryConfigured =>
         OptionalEnvironmentVariable(ConfigVariable) is not null &&
@@ -74,7 +75,7 @@ public sealed class SqlServerIntegrationTests
         Assert.True(File.Exists(configPath), $"找不到集成测试配置：{configPath}");
 
         var settings = SettingsLoader.Load(configPath);
-        var connectionString = SqlConnectionFactory.BuildConnectionString(settings.Connection);
+        var connectionString = SqlConnectionFactory.BuildConnectionString(settings.Connection, RequiredEnvironmentVariable(QueryDatabaseVariable));
         var scriptPath = Path.Combine(AppContext.BaseDirectory, "check-access.sql");
 
         Assert.True(File.Exists(scriptPath), $"找不到权限检查脚本：{scriptPath}");

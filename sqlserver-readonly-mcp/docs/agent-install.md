@@ -12,7 +12,7 @@
 | Release 标签 | `sqlserver-readonly-mcp-v*` |
 | Windows 包 / 程序 | `sqlserver-readonly-mcp-win-x64.zip` / `sqlserver-readonly-mcp.exe` |
 | MCP 名称 | `sqlserver-readonly` |
-| 配置字段 | `connection.authentication`、`connection.server`、`connection.username`、`connection.password`、`connection.defaultDatabase` |
+| 配置字段 | `connection.authentication`、`connection.server`、`connection.username`、`connection.password` |
 | 工具 | `execute_sql`、`execute_procedure`、`find_object`、`find_object_references`、`get_object_details` |
 | Windows 运行时 | x64 自包含包，不需要另装 .NET Runtime |
 
@@ -56,7 +56,6 @@ if ($actualHash -ne $expectedHash) { throw 'Release ZIP 的 SHA-256 校验失败
   "server": "SQLSERVER\\INSTANCE",
   "username": "",
   "password": "",
-  "defaultDatabase": "ExampleDatabase",
   "encrypt": true,
   "trustServerCertificate": true,
   "connectTimeoutSeconds": 10,

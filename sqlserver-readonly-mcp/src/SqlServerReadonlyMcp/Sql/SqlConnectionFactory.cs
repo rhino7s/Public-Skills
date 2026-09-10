@@ -6,26 +6,18 @@ namespace SqlServerReadonlyMcp.Sql;
 public sealed class SqlConnectionFactory
 {
     private readonly ConnectionSettings _settings;
-    private readonly string _connectionString;
 
     public SqlConnectionFactory(McpSettings settings)
     {
         _settings = settings.Connection;
-        _connectionString = BuildConnectionString(_settings);
     }
 
-    public async Task<SqlConnection> OpenAsync(string? database, CancellationToken cancellationToken)
+    public async Task<SqlConnection> OpenAsync(string database, CancellationToken cancellationToken)
     {
-        var connection = new SqlConnection(_connectionString);
+        var connection = new SqlConnection(BuildConnectionString(_settings, database));
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(database) &&
-                !string.Equals(database, connection.Database, StringComparison.OrdinalIgnoreCase))
-            {
-                await connection.ChangeDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
-            }
-
             return connection;
         }
         catch
@@ -35,12 +27,13 @@ public sealed class SqlConnectionFactory
         }
     }
 
-    internal static string BuildConnectionString(ConnectionSettings settings)
+    internal static string BuildConnectionString(ConnectionSettings settings, string database)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
         var builder = new SqlConnectionStringBuilder
         {
             DataSource = settings.Server,
-            InitialCatalog = settings.DefaultDatabase,
+            InitialCatalog = database,
             Encrypt = settings.Encrypt,
             TrustServerCertificate = settings.TrustServerCertificate,
             ConnectTimeout = settings.ConnectTimeoutSeconds,

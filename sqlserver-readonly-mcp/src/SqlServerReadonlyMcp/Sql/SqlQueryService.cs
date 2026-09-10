@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -15,7 +16,7 @@ public sealed class SqlQueryService
     private const string LimitGuidance =
         "结果达到 MCP 返回限制，当前内容不代表完整数据。请改写 SQL：增加 WHERE 条件、聚合，或使用较小的 TOP 后重新查询。";
     private const string ProcedureLimitGuidance =
-        "存储过程结果达到 MCP 返回限制，当前内容不代表完整数据。请缩小参数范围，或改用 execute_sql 做聚合查询。";
+        "存储过程结果达到 MCP 返回限制，当前内容不代表完整数据。procedure 已执行完成，但返回内容不完整；不得仅为获取剩余结果而重复执行该业务动作。";
 
     private readonly QuerySettings _settings;
     private readonly SqlConnectionFactory _connectionFactory;
@@ -77,6 +78,7 @@ public sealed class SqlQueryService
         var resultSizeBytes = 0;
         var truncated = false;
         string? truncationReason = null;
+        var procedureStarted = false;
 
         if (string.IsNullOrWhiteSpace(database))
         {
@@ -121,8 +123,12 @@ public sealed class SqlQueryService
             command.CommandType = CommandType.Text;
             command.CommandTimeout = _settings.TimeoutSeconds;
 
+            using var executionDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (tool == "execute_procedure") executionDeadline.CancelAfter(TimeSpan.FromSeconds(_settings.TimeoutSeconds));
+            var executionToken = executionDeadline.Token;
+            procedureStarted = tool == "execute_procedure";
             await using var reader = await command
-                .ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken)
+                .ExecuteReaderAsync(CommandBehavior.SequentialAccess, executionToken)
                 .ConfigureAwait(false);
 
             var maximumBytes = checked(_settings.MaxResultSizeKb * 1024);
@@ -146,11 +152,12 @@ public sealed class SqlQueryService
                     truncated = true;
                     truncationReason = "max_result_size";
                     stopReading = true;
-                    command.Cancel();
+                    if (procedureStarted) await DrainAsync(reader, executionToken).ConfigureAwait(false);
+                    else command.Cancel();
                     break;
                 }
 
-                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                while (await reader.ReadAsync(executionToken).ConfigureAwait(false))
                 {
                     if (returnedRows >= _settings.MaxRows)
                     {
@@ -202,11 +209,12 @@ public sealed class SqlQueryService
                 resultSets.Add(new ResultSetResult(columns, rows));
                 if (stopReading)
                 {
-                    command.Cancel();
+                    if (procedureStarted) await DrainAsync(reader, executionToken).ConfigureAwait(false);
+                    else command.Cancel();
                     break;
                 }
             }
-            while (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false));
+            while (await reader.NextResultAsync(executionToken).ConfigureAwait(false));
 
             resultSizeBytes = JsonSerializer.SerializeToUtf8Bytes(resultSets).Length;
             totalStopwatch.Stop();
@@ -224,6 +232,20 @@ public sealed class SqlQueryService
                 null);
             WriteAudit(success, tool, database, sql, null);
             return success;
+        }
+        catch (Exception exception) when (procedureStarted)
+        {
+            totalStopwatch.Stop();
+            var cause = cancellationToken.IsCancellationRequested ? "调用方取消" :
+                exception is OperationCanceledException || exception is SqlException { Number: -2 } ? "执行超时" : "执行或结果读取失败";
+            var failed = Failure(requestId, resultSets, returnedRows,
+                JsonSerializer.SerializeToUtf8Bytes(resultSets).Length, queueWaitMilliseconds,
+                totalStopwatch.ElapsedMilliseconds,
+                new ToolError("execution_unknown", $"{cause}，procedure 未确认执行完成，可能已有部分操作生效；不得自动重试。",
+                    (exception as SqlException)?.Number, (exception as SqlException)?.State, (exception as SqlException)?.Class))
+                with { Truncated = truncated, TruncationReason = truncationReason };
+            WriteAudit(failed, tool, database, sql, "execution_unknown");
+            return failed;
         }
         catch (QueryQueueTimeoutException exception)
         {
@@ -283,6 +305,17 @@ public sealed class SqlQueryService
             WriteAudit(failed, tool, database, sql, "internal_error");
             return failed;
         }
+    }
+
+    // Consume all remaining result sets without retaining values, so late SQL errors are observed.
+    internal static async Task DrainAsync(DbDataReader reader, CancellationToken cancellationToken)
+    {
+        do
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                cancellationToken.ThrowIfCancellationRequested();
+        }
+        while (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false));
     }
 
     private static object? ReadValue(

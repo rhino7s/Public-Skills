@@ -34,7 +34,7 @@ public sealed class SqlServerTools
         "允许变量、CTE、跨库三段名，以及对本地临时表或表变量写入；写入语句中的表别名和 CTE 名称不得以 # 开头；" +
         "禁止持久化 DML、嵌套 DML 数据源、DDL、USE、EXEC/EXECUTE（包括 INSERT ... EXEC）、NEXT VALUE FOR、全局临时表，" +
         "以及四段名、OPENQUERY、OPENROWSET、OPENDATASOURCE 等显式远程或 Ad Hoc 数据源。" +
-        "精确核对不默认使用 NOLOCK。")]
+        "精确核对不默认使用 NOLOCK。每次调用独立执行。本地临时表（#）、变量及事务状态不能跨调用复用；依赖这些状态的 SQL 必须放在同一次调用中完成。")]
     public async Task<CallToolResult> ExecuteSqlAsync(
         [Description("完整 T-SQL 查询批次；优先指定字段并控制范围。持久化修改、INSERT ... EXEC、嵌套 DML、序列取号及显式远程或 Ad Hoc 数据源会在连接数据库前被拒绝。")]
         string sql,
@@ -63,7 +63,7 @@ public sealed class SqlServerTools
         OutputSchemaType = typeof(QueryResult))]
     [Description(
         "执行一条静态命名、已审核且当前账号 canExecute=true 的存储过程调用。" +
-        "过程可能修改资料，仅在用户明确要求对应业务动作时使用；" +
+        "过程可能修改资料，仅在用户明确要求对应业务动作时使用；输出截断不代表执行中止，execution_unknown 表示未确认执行完成，不得自动重试；" +
         "禁止动态 SQL、变量过程名、sys 架构及 sp_/xp_ 前缀的过程（包括 sp_executesql、sp_prepexec）、EXECUTE AS、四段名和远程执行；三段名中的数据库必须与 database 参数一致。")]
     public async Task<CallToolResult> ExecuteProcedureAsync(
         [Description("单条存储过程调用，例如 EXEC dbo.ExampleProcedure 'a', 1；使用 database.schema.procedure 时，数据库必须与 database 参数一致。")]
@@ -79,7 +79,9 @@ public sealed class SqlServerTools
             result.Success
                 ? $"过程执行完成：返回 {result.ReturnedRows} 行，{result.ResultSets.Count} 个结果集" +
                   (result.Truncated ? $"；结果已截断（{result.TruncationReason}）。" : "。")
-                : $"过程执行失败：{result.Error?.Message}");
+                : result.Error?.Category == "execution_unknown"
+                    ? $"过程执行结果未确认：{result.Error.Message}"
+                    : $"过程执行失败：{result.Error?.Message}");
     }
 
     [McpServerTool(
@@ -145,8 +147,8 @@ public sealed class SqlServerTools
         bool includeJobs = false,
         [Description("跳过多少个数据库模块候选；用于按 nextOffset 续查，默认 0，最大 1000。不作用于 Job。达到硬上限且仍有结果时，nextOffset 为 null，并返回 referencesTruncationReason=max_offset。")]
         int offset = 0,
-        [Description("最多返回多少个数据库模块候选，默认 20，硬上限 50。不作用于 Job。")]
-        int limit = 20,
+        [Description("最多返回多少个数据库模块候选，默认 50，硬上限 50。不作用于 Job。")]
+        int limit = 50,
         CancellationToken cancellationToken = default)
     {
         var result = await _metadataService.FindObjectReferencesAsync(

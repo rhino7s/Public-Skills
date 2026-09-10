@@ -47,8 +47,8 @@ public sealed class CapabilityProtocolTests
                         new Dictionary<string, object?> { ["sql"] = "", ["database"] = "test", ["offset"] = -1 },
                         cancellationToken: cancellationToken);
                     Assert.True(result.IsError);
-                    Assert.Equal("用户没有访问权限", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
-                    Assert.Equal("access_denied", result.StructuredContent!.Value.GetProperty("code").GetString());
+                    Assert.DoesNotContain("TestCatalog", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+                    Assert.Equal("access_check_unavailable", result.StructuredContent!.Value.GetProperty("code").GetString());
                 }
             }
             else

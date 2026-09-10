@@ -12,28 +12,44 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
     public bool RequiresCheck => settings.Capabilities.Enabled &&
         ConnectionAuthenticationModes.Resolve(settings.Connection) == ConnectionAuthenticationModes.WindowsIntegrated;
 
-    public async Task<bool> CanAccessAsync(CancellationToken cancellationToken)
+    public async Task<CallToolResult?> CheckAccessAsync(CancellationToken cancellationToken)
     {
-        if (!RequiresCheck) return true;
+        if (cancellationToken.IsCancellationRequested) return Canceled();
+        if (!RequiresCheck) return null;
         try
         {
             var allowed = await store.CheckAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!allowed) logger.LogWarning("Capability access check returned false.");
-            return allowed;
+            return allowed ? null : Denied();
         }
         catch (Exception exception)
         {
             // Do not return SQL diagnostics, credentials, catalog names or function names to clients.
             logger.LogWarning("Capability access check failed: {Type}; SQL error {Number}.",
                 exception.GetType().Name, (exception as Microsoft.Data.SqlClient.SqlException)?.Number);
-            return false;
+            return FailureResult(exception, cancellationToken, checking: true);
         }
+    }
+
+    public static CallToolResult Unavailable() => Error("access_check_unavailable", "访问检查暂不可用，本次操作未执行；可稍后重试，不得绕过检查。");
+    private static CallToolResult Canceled() => Error("canceled", "调用已取消。");
+    private static CallToolResult FailureResult(Exception exception, CancellationToken token, bool checking)
+    {
+        if (token.IsCancellationRequested) return Canceled();
+        if (exception is UnauthorizedAccessException || exception is Microsoft.Data.SqlClient.SqlException sql
+            && SqlErrorClassifier.Categorize(sql.Number) == "permission_denied") return Denied();
+        if (exception is InvalidDataException or ArgumentException || exception is Microsoft.Data.SqlClient.SqlException missing
+            && missing.Number is 195 or 201 or 207 or 208 or 4121)
+            return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "能力配置不可用，请联系管理员处理。");
+        return checking ? Unavailable() : Error("capabilities_unavailable", "能力目录暂不可用，请稍后重试；本次不得继续业务操作。");
     }
 
     public static CallToolResult Denied() => Error("access_denied", "用户没有访问权限");
 
     public async Task<CallToolResult> ListAsync(long offset, CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested) return Canceled();
         if (offset < 0 || offset > long.MaxValue - settings.Capabilities.PageSize)
             return Error("invalid_input", "offset 必须为可续取的非负整数。");
         if (!settings.Capabilities.Enabled) return Error("capabilities_disabled", "能力目录未启用。");
@@ -77,7 +93,7 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
         {
             logger.LogWarning("Capability directory read failed: {Type}; SQL error {Number}.",
                 exception.GetType().Name, (exception as Microsoft.Data.SqlClient.SqlException)?.Number);
-            return RequiresCheck ? Denied() : Error("capabilities_unavailable", "能力目录暂不可用。");
+            return FailureResult(exception, cancellationToken, checking: false);
         }
     }
 

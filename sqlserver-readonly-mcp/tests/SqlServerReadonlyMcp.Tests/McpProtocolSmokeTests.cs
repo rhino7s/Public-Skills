@@ -76,6 +76,8 @@ public sealed class McpProtocolSmokeTests : IDisposable
         Assert.Equal(
             ["execute_procedure", "execute_sql", "find_object", "find_object_references", "get_object_details"],
             tools.Select(tool => tool.Name).Order(StringComparer.Ordinal).ToArray());
+        var queryTool = Assert.Single(tools, tool => tool.Name == "execute_sql");
+        Assert.Contains("每次调用独立执行", queryTool.ProtocolTool.Description);
         var procedureTool = Assert.Single(tools, tool => tool.Name == "execute_procedure");
         Assert.False(procedureTool.ProtocolTool.Annotations?.ReadOnlyHint);
         Assert.True(procedureTool.ProtocolTool.Annotations?.DestructiveHint);
@@ -151,7 +153,7 @@ public sealed class McpProtocolSmokeTests : IDisposable
             "referencesTruncationReason=max_offset",
             referenceInputs.GetProperty("offset").GetProperty("description").GetString());
         Assert.False(referenceInputs.GetProperty("includeJobs").GetProperty("default").GetBoolean());
-        Assert.Equal(20, referenceInputs.GetProperty("limit").GetProperty("default").GetInt32());
+        Assert.Equal(50, referenceInputs.GetProperty("limit").GetProperty("default").GetInt32());
 
         Assert.All(
             tools.Where(tool => tool.Name != "find_object_references"),

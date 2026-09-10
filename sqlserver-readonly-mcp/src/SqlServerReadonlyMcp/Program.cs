@@ -50,14 +50,15 @@ public static class Program
             var toolJsonOptions = CreateToolJsonOptions();
             var mcp = builder.Services
                 .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Text +
-                    (settings.Capabilities.Enabled ? "\n\n开始业务操作前读取 list_capabilities 并遵守返回的业务说明；分页未结束时继续读取。收到用户没有访问权限后停止调用本 MCP，不尝试其他工具路径。" : string.Empty))
+                    (settings.Capabilities.Enabled ? "\n\n开始业务操作前读取 list_capabilities 并遵守返回的业务说明；分页未结束时继续读取。收到 access_denied 后停止调用本 MCP；检查或目录暂不可用时停止本次业务操作，可稍后重试；调用取消后不自动重试。不得尝试其他工具路径绕过检查。" : string.Empty))
                 .WithStdioServerTransport()
                 .WithTools<SqlServerTools>(serializerOptions: toolJsonOptions)
                 .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
                 {
                     var capabilities = context.Services?.GetService<CapabilityService>();
-                    if (capabilities is null || !await capabilities.CanAccessAsync(cancellationToken).ConfigureAwait(false))
-                        return CapabilityService.Denied();
+                    if (capabilities is null) return CapabilityService.Unavailable();
+                    var rejection = await capabilities.CheckAccessAsync(cancellationToken).ConfigureAwait(false);
+                    if (rejection is not null) return rejection;
                     return await next(context, cancellationToken).ConfigureAwait(false);
                 }));
             if (settings.Capabilities.Enabled)

@@ -47,11 +47,11 @@ public sealed class CapabilityTests
     {
         var store = new FakeStore { Allowed = true };
         var service = Service(Settings(), store);
-        Assert.True(await service.CanAccessAsync(CancellationToken.None));
+        Assert.Null(await service.CheckAccessAsync(CancellationToken.None));
         store.Allowed = false;
-        Assert.False(await service.CanAccessAsync(CancellationToken.None));
+        Assert.Equal("access_denied", (await service.CheckAccessAsync(CancellationToken.None))!.StructuredContent!.Value.GetProperty("code").GetString());
         store.Allowed = true;
-        Assert.True(await service.CanAccessAsync(CancellationToken.None));
+        Assert.Null(await service.CheckAccessAsync(CancellationToken.None));
         Assert.Equal(3, store.Checks);
     }
 
@@ -62,21 +62,36 @@ public sealed class CapabilityTests
     {
         var store = new FakeStore { CheckFailure = new UnauthorizedAccessException() };
         var service = Service(Settings(ad: ad, enabled: enabled), store);
-        Assert.True(await service.CanAccessAsync(CancellationToken.None));
+        Assert.Null(await service.CheckAccessAsync(CancellationToken.None));
         Assert.Equal(0, store.Checks);
     }
 
     [Fact]
-    public async Task PermissionAndContractFailuresDenyWithoutLeakingDiagnostics()
+    public async Task CheckFailuresStayBlockedButDistinguishTheirCause()
     {
-        foreach (var error in new Exception[] { new UnauthorizedAccessException("secret database"), new InvalidDataException(), new TimeoutException() })
+        foreach (var (error, code) in new (Exception, string)[] {
+            (new UnauthorizedAccessException("secret database"), "access_denied"),
+            (new InvalidDataException("secret function"), "access_check_unavailable"),
+            (new TimeoutException("secret server"), "access_check_unavailable"),
+            (new OperationCanceledException(), "access_check_unavailable") })
         {
-            var service = Service(Settings(), new FakeStore { CheckFailure = error });
-            Assert.False(await service.CanAccessAsync(CancellationToken.None));
-            var result = CapabilityService.Denied();
-            Assert.Equal("用户没有访问权限", Text(result));
-            Assert.Equal("access_denied", result.StructuredContent!.Value.GetProperty("code").GetString());
+            var store = new FakeStore { CheckFailure = error };
+            var result = await Service(Settings(), store).CheckAccessAsync(CancellationToken.None);
+            Assert.NotNull(result);
+            Assert.True(result.IsError);
+            Assert.Equal(code, result.StructuredContent!.Value.GetProperty("code").GetString());
+            Assert.DoesNotContain("secret", Text(result));
+            Assert.Equal(0, store.Reads);
         }
+    }
+
+    [Fact]
+    public async Task CallerCancellationIsNotPermissionDenial()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var result = await Service(Settings(), new FakeStore()).CheckAccessAsync(source.Token);
+        Assert.Equal("canceled", result!.StructuredContent!.Value.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -129,7 +144,7 @@ public sealed class CapabilityTests
         {
             var result = await Service(Settings(), new FakeStore { Rows = rows }).ListAsync(0, CancellationToken.None);
             Assert.True(result.IsError);
-            Assert.Equal("用户没有访问权限", Text(result));
+            Assert.Equal("capabilities_unavailable", result.StructuredContent!.Value.GetProperty("code").GetString());
             Assert.DoesNotContain("first", Text(result));
         }
     }

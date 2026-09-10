@@ -19,6 +19,7 @@ public sealed class SqlQueryService
         "存储过程结果达到 MCP 返回限制，当前内容不代表完整数据。procedure 已执行完成，但返回内容不完整；不得仅为获取剩余结果而重复执行该业务动作。";
 
     private readonly QuerySettings _settings;
+    private readonly CapabilityService _capabilities;
     private readonly SqlConnectionFactory _connectionFactory;
     private readonly QueryConcurrencyGate _concurrencyGate;
     private readonly SqlSafetyAnalyzer _safetyAnalyzer;
@@ -29,9 +30,11 @@ public sealed class SqlQueryService
         SqlConnectionFactory connectionFactory,
         QueryConcurrencyGate concurrencyGate,
         SqlSafetyAnalyzer safetyAnalyzer,
-        AuditLogger auditLogger)
+        AuditLogger auditLogger,
+        CapabilityService capabilities)
     {
         _settings = settings.Query;
+        _capabilities = capabilities;
         _connectionFactory = connectionFactory;
         _concurrencyGate = concurrencyGate;
         _safetyAnalyzer = safetyAnalyzer;
@@ -110,6 +113,20 @@ public sealed class SqlQueryService
             return rejected;
         }
 
+        if (tool == "execute_procedure")
+        {
+            _safetyAnalyzer.AnalyzeProcedureCall(sql, database, out var target);
+            var denial = await _capabilities.CheckProcedureAccessAsync(database.Trim(), target!.Schema, target.Name, cancellationToken).ConfigureAwait(false);
+            if (denial is not null)
+            {
+                totalStopwatch.Stop();
+                var rejected = Failure(requestId, resultSets, returnedRows, resultSizeBytes, queueWaitMilliseconds,
+                    totalStopwatch.ElapsedMilliseconds, denial);
+                WriteAudit(rejected, tool, database, sql, denial.Category);
+                return rejected;
+            }
+        }
+
         try
         {
             using var lease = await _concurrencyGate.EnterAsync(cancellationToken).ConfigureAwait(false);
@@ -119,7 +136,21 @@ public sealed class SqlQueryService
                 .OpenAsync(database.Trim(), cancellationToken)
                 .ConfigureAwait(false);
             await using var command = connection.CreateCommand();
-            command.CommandText = sql;
+            if (tool == "execute_procedure")
+            {
+                _safetyAnalyzer.AnalyzeProcedureCall(sql, database, out var target);
+                var verification = await ProcedureTargetVerifier.VerifyAsync(connection, target!, _settings.TimeoutSeconds, cancellationToken).ConfigureAwait(false);
+                if (verification.Error is { } error)
+                {
+                    totalStopwatch.Stop();
+                    var rejected = Failure(requestId, resultSets, returnedRows, resultSizeBytes,
+                        queueWaitMilliseconds, totalStopwatch.ElapsedMilliseconds, error);
+                    WriteAudit(rejected, tool, database, sql, error.Category);
+                    return rejected;
+                }
+                command.CommandText = target!.Qualify(sql, connection.Database, verification.Schema!, verification.Name!);
+            }
+            else command.CommandText = sql;
             command.CommandType = CommandType.Text;
             command.CommandTimeout = _settings.TimeoutSeconds;
 

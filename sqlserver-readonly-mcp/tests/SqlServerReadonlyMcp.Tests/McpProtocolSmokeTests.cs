@@ -35,7 +35,7 @@ public sealed class McpProtocolSmokeTests : IDisposable
     }
 
     [Fact(Timeout = 30_000)]
-    public async Task NegotiatesLatestProtocolAndPublishesFiveTools()
+    public async Task NegotiatesLatestProtocolAndPublishesFourToolsWithoutCatalog()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
         Directory.CreateDirectory(_temporaryDirectory);
@@ -74,14 +74,11 @@ public sealed class McpProtocolSmokeTests : IDisposable
         Assert.Equal(LatestProtocolVersion, client.NegotiatedProtocolVersion);
         Assert.Equal(McpServerInstructions.Text, client.ServerInstructions);
         Assert.Equal(
-            ["execute_procedure", "execute_sql", "find_object", "find_object_references", "get_object_details"],
+            ["execute_sql", "find_object", "find_object_references", "get_object_details"],
             tools.Select(tool => tool.Name).Order(StringComparer.Ordinal).ToArray());
         var queryTool = Assert.Single(tools, tool => tool.Name == "execute_sql");
         Assert.Contains("每次调用独立执行", queryTool.ProtocolTool.Description);
-        var procedureTool = Assert.Single(tools, tool => tool.Name == "execute_procedure");
-        Assert.False(procedureTool.ProtocolTool.Annotations?.ReadOnlyHint);
-        Assert.True(procedureTool.ProtocolTool.Annotations?.DestructiveHint);
-        Assert.Contains("必须与 database 参数一致", procedureTool.ProtocolTool.Description);
+        Assert.DoesNotContain(tools, tool => tool.Name == "execute_procedure");
 
         var executeSqlTool = Assert.Single(tools, tool => tool.Name == "execute_sql");
         Assert.Contains("NEXT VALUE FOR", executeSqlTool.ProtocolTool.Description);
@@ -276,31 +273,12 @@ public sealed class McpProtocolSmokeTests : IDisposable
             rejectedSequenceContent.GetProperty("error").GetProperty("message").GetString(),
             StringComparison.Ordinal);
 
-        var rejectedProcedureDatabase = await client.CallToolAsync(
-            "execute_procedure",
-            new Dictionary<string, object?>
-            {
-                ["sql"] = "EXEC OtherDatabase.dbo.ExampleProcedure;",
-                ["database"] = "ExampleDatabase",
-            },
-            cancellationToken: cancellationToken);
-        var rejectedProcedureDatabaseContent = Assert.NotNull(rejectedProcedureDatabase.StructuredContent);
-        Assert.Equal(
-            "safety_rejection",
-            rejectedProcedureDatabaseContent.GetProperty("error").GetProperty("category").GetString());
-        Assert.Contains(
-            "必须与 database 参数一致",
-            rejectedProcedureDatabaseContent.GetProperty("error").GetProperty("message").GetString(),
-            StringComparison.Ordinal);
-
         // The configured host is invalid: safety_rejection proves these requests
         // are rejected before trying to connect, through the actual MCP transport.
         foreach (var (tool, sql) in new[]
                  {
                      ("execute_sql", "UPDATE [#x] SET value = 1 FROM dbo.PersistentTable AS [#x];"),
                      ("execute_sql", "WITH [#x] AS (SELECT * FROM dbo.PersistentTable) DELETE FROM [#x];"),
-                     ("execute_procedure", "EXEC sys.sp_prepexec NULL, NULL, N'SELECT 1';"),
-                     ("execute_procedure", "EXEC sp_cursoropen NULL, N'SELECT 1';"),
                  })
         {
             var rejected = await client.CallToolAsync(

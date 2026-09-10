@@ -35,6 +35,9 @@ public sealed class CapabilityProtocolTests
             await using var client = await McpClient.CreateAsync(transport, cancellationToken: cancellationToken);
             var tools = await client.ListToolsAsync(cancellationToken: cancellationToken);
             Assert.Equal(6, tools.Count);
+            var procedure = Assert.Single(tools, tool => tool.Name == "execute_procedure");
+            Assert.Contains("当前身份能力目录明确授权", procedure.ProtocolTool.Description);
+            Assert.True(procedure.ProtocolTool.Annotations?.DestructiveHint);
             var catalog = Assert.Single(tools, tool => tool.Name == "list_capabilities");
             Assert.Equal(["offset"], catalog.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToArray());
             Assert.DoesNotContain("TestCatalog", client.ServerInstructions);
@@ -55,6 +58,13 @@ public sealed class CapabilityProtocolTests
             {
                 var query = await client.CallToolAsync("execute_sql", new Dictionary<string, object?> { ["sql"] = "", ["database"] = "test" }, cancellationToken: cancellationToken);
                 Assert.Equal("safety_rejection", query.StructuredContent!.Value.GetProperty("error").GetProperty("category").GetString());
+                foreach (var sql in new[] { "EXEC OtherDb.dbo.p;", "EXEC sys.sp_prepexec NULL, NULL, N'SELECT 1';", "EXEC sp_cursoropen NULL, N'SELECT 1';" })
+                {
+                    var rejected = await client.CallToolAsync("execute_procedure", new Dictionary<string, object?> { ["sql"] = sql, ["database"] = "test" }, cancellationToken: cancellationToken);
+                    Assert.Equal("safety_rejection", rejected.StructuredContent!.Value.GetProperty("error").GetProperty("category").GetString());
+                }
+                var blocked = await client.CallToolAsync("execute_procedure", new Dictionary<string, object?> { ["sql"] = "EXEC dbo.sp_test;", ["database"] = "test" }, cancellationToken: cancellationToken);
+                Assert.Equal("access_check_unavailable", blocked.StructuredContent!.Value.GetProperty("error").GetProperty("category").GetString());
                 var page = await client.CallToolAsync("list_capabilities", new Dictionary<string, object?> { ["offset"] = -1 }, cancellationToken: cancellationToken);
                 Assert.Equal("invalid_input", page.StructuredContent!.Value.GetProperty("code").GetString());
             }

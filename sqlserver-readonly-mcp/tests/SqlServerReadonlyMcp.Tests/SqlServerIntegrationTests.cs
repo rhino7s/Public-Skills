@@ -63,6 +63,88 @@ public sealed class SqlServerIntegrationTests
         Assert.Equal(1, content.GetProperty("resultSets")[0].GetProperty("rows")[0][0].GetInt32());
     }
 
+    [Fact(Timeout = 60_000, Skip = "未配置目录名称匹配测试。", SkipUnless = nameof(IsQueryConfigured))]
+    public async Task ProcedureGrantMatchesOnlyCompleteTargetNames()
+    {
+        var settings = SettingsLoader.Load(RequiredEnvironmentVariable(ConfigVariable));
+        var token = TestContext.Current.CancellationToken;
+        await using var connection = new SqlConnection(SqlConnectionFactory.BuildConnectionString(settings.Connection, RequiredEnvironmentVariable(QueryDatabaseVariable)));
+        await connection.OpenAsync(token);
+        var quotedDb = "[" + connection.Database.Replace("]", "]]") + "]";
+        foreach (var (entry, expected) in new (string?, bool)[] {
+            (null, false), ("", false), ("   ", false), ("dbo.sp_test", false),
+            (quotedDb + ".dbo.sp_test", true), (quotedDb + ".[dbo].[sp_test]", true),
+            (quotedDb + ".other.sp_test", false), (quotedDb + ".dbo.another", false),
+            ("server." + quotedDb + ".dbo.sp_test", false), ("NoSuchDb_McpGrantTest.dbo.sp_test", false) })
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM (VALUES (@entry)) AS c(iname) WHERE " + CapabilityStore.ProcedureGrantPredicate;
+            command.Parameters.Add("@entry", System.Data.SqlDbType.NVarChar, 512).Value = (object?)entry ?? DBNull.Value;
+            command.Parameters.AddWithValue("@schema", "dbo");
+            command.Parameters.AddWithValue("@name", "sp_test");
+            Assert.Equal(expected ? 1 : 0, (int)(await command.ExecuteScalarAsync(token))!);
+        }
+    }
+
+    [Fact(Timeout = 60_000, Skip = "未配置目录定序测试。", SkipUnless = nameof(IsQueryConfigured))]
+    public async Task ProcedureGrantUsesCatalogRatherThanSourceDataCollation()
+    {
+        var settings = SettingsLoader.Load(RequiredEnvironmentVariable(ConfigVariable));
+        var token = TestContext.Current.CancellationToken;
+        await using var connection = new SqlConnection(SqlConnectionFactory.BuildConnectionString(settings.Connection, RequiredEnvironmentVariable(QueryDatabaseVariable)));
+        await connection.OpenAsync(token);
+        var quotedDb = "[" + connection.Database.Replace("]", "]]") + "]";
+        foreach (var (schema, name) in new[] { ("dbo", "sp_cafe"), ("dbo", "sp_café"), ("dbo", "SP_CAFE"), ("dbó", "sp_cafe") })
+        foreach (var dataCollation in new[] { "Latin1_General_100_CI_AI", "Latin1_General_100_CS_AS" })
+        {
+            await using var command = connection.CreateCommand();
+            // The source explicitly has a different data collation. Authorization must still
+            // agree with the target catalog, including accent/case distinctions in both components.
+            command.CommandText = $"""
+                SELECT CASE WHEN N'dbo' COLLATE CATALOG_DEFAULT = @schema COLLATE CATALOG_DEFAULT
+                    AND N'sp_cafe' COLLATE CATALOG_DEFAULT = @name COLLATE CATALOG_DEFAULT THEN 1 ELSE 0 END,
+                    (SELECT COUNT(*) FROM (VALUES (@entry COLLATE {dataCollation})) AS c(iname)
+                     WHERE {CapabilityStore.ProcedureGrantPredicate});
+                """;
+            command.Parameters.AddWithValue("@entry", quotedDb + ".dbo.sp_cafe");
+            command.Parameters.AddWithValue("@schema", schema);
+            command.Parameters.AddWithValue("@name", name);
+            await using var reader = await command.ExecuteReaderAsync(token);
+            Assert.True(await reader.ReadAsync(token));
+            Assert.Equal(reader.GetInt32(0), reader.GetInt32(1));
+        }
+
+        // Reproduce contained-database equality semantics without creating/altering a database:
+        // data is accent-insensitive, while catalog identifiers are accent-sensitive.
+        var containedPredicate = CapabilityStore.ProcedureGrantPredicate
+            .Replace("CATALOG_DEFAULT", "Latin1_General_100_CI_AS", StringComparison.Ordinal)
+            .Replace("DATABASE_DEFAULT", "Latin1_General_100_CI_AI", StringComparison.Ordinal);
+        foreach (var (schema, name) in new[] { ("dbo", "sp_café"), ("dbó", "sp_cafe") })
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM (VALUES (@entry)) AS c(iname) WHERE " + containedPredicate;
+            command.Parameters.AddWithValue("@entry", quotedDb + ".dbo.sp_cafe");
+            command.Parameters.AddWithValue("@schema", schema);
+            command.Parameters.AddWithValue("@name", name);
+            Assert.Equal(0, (int)(await command.ExecuteScalarAsync(token))!);
+        }
+    }
+
+    [Fact(Timeout = 60_000, Skip = "未配置真实库 procedure 核验测试。", SkipUnless = nameof(IsQueryConfigured))]
+    public async Task ProcedureCatalogRejectsUnlistedTargetWithoutExecution()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var transport = CreateTransport(RequiredEnvironmentVariable(ConfigVariable), "procedure-verification-integration");
+        await using var client = await McpClient.CreateAsync(transport, cancellationToken: token);
+        var result = await client.CallToolAsync("execute_procedure", new Dictionary<string, object?>
+        {
+            ["database"] = RequiredEnvironmentVariable(QueryDatabaseVariable),
+            ["sql"] = "EXEC dbo.sp_mcp_missing_" + Guid.NewGuid().ToString("N") + ";",
+        }, cancellationToken: token);
+        Assert.True(result.IsError);
+        Assert.Equal("access_denied", result.StructuredContent!.Value.GetProperty("error").GetProperty("category").GetString());
+    }
+
     [Fact(
         Timeout = 180_000,
         Skip = "未配置真实库权限检查。",

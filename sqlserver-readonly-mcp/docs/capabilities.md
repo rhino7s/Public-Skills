@@ -24,7 +24,7 @@
 
 ## 函数契约
 
-`list_capabilities()` 是无参数表值函数，返回 int id、int ord、非空文本 desp。函数按登录身份筛选、按 id 去重，保留最小 ord。MCP 只查询三列，显式按 ord、id 排序，不暴露额外字段。
+`list_capabilities()` 是无参数表值函数，返回 int id、int ord、文本 iname、非空文本 desp。函数按登录身份筛选、按 id 去重，保留最小 ord。MCP 只查询这四列，显式按 ord、id 排序，不暴露额外字段。
 
 每笔说明在函数内整合为 `### SKILL` 或 `### 对象：数据库.dbo.对象` 标题加正文。MCP 不区分后台 skill/grant，返回按顺序拼接的 Markdown 文本及分页尾部，不重复返回完整结构化目录。
 
@@ -64,3 +64,9 @@ Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页�
 - 160 项自动测试中 156 项通过，4 项通用数据库联调测试跳过；新增缺失目标库拒绝、连接参数隔离和旧 defaultDatabase 字段忽略测试。
 - 另通过最新项目开发中 MCP 和未修改的本地 AD 配置进行实际只读验证：目录返回 1 条 SKILL，check 返回 SQL bit true，DB_NAME() 与明确指定的目标数据库一致。
 - 配置文件测试前后哈希一致；未修改实际表、函数或授权，未调用 Codex 已配置的真实 MCP。
+
+## Procedure 强制授权
+
+未配置 listFunction 时不注册 execute_procedure。配置后所有账号每次执行都直接查询目录函数的 iname，独立于 AD checkFunction、展示分页和 Agent 历史调用，不缓存授权。skill 的 iname 为空字符串（兼容 NULL/空白）；仅当前身份有效 grant 返回完整三段对象名。函数负责这一契约，MCP 不解析说明文字判断授权。
+
+对象名按数据库、schema、对象分别比较，数据库名通过 DB_ID 解析；schema 和对象名使用目标库目录定序（CATALOG_DEFAULT），不使用数据定序，兼容方括号。未匹配返回 access_denied；查询失败返回安全的不可用/取消状态，不执行业务调用。授权通过后仍核验真实用户 procedure、系统同名冲突及 EXECUTE 权限。检查与执行不是原子事务。无需为 grant 增加对象类型字段。

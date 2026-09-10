@@ -62,7 +62,8 @@ public static class Program
                     return await next(context, cancellationToken).ConfigureAwait(false);
                 }));
             if (settings.Capabilities.Enabled)
-                mcp.WithTools<CapabilityTools>(serializerOptions: toolJsonOptions);
+                mcp.WithTools<CapabilityTools>(serializerOptions: toolJsonOptions)
+                    .WithTools<ProcedureTools>(serializerOptions: toolJsonOptions);
 
             await builder.Build().RunAsync().ConfigureAwait(false);
             return 0;

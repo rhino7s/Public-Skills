@@ -45,8 +45,11 @@ public sealed class SqlSafetyAnalyzer
         return SqlSafetyResult.Allowed();
     }
 
-    public SqlSafetyResult AnalyzeProcedureCall(string sql, string database)
+    public SqlSafetyResult AnalyzeProcedureCall(string sql, string database) => AnalyzeProcedureCall(sql, database, out _);
+
+    internal SqlSafetyResult AnalyzeProcedureCall(string sql, string database, out ProcedureCallTarget? target)
     {
+        target = null;
         var parseResult = Parse(sql);
         if (parseResult.Error is not null)
         {
@@ -116,19 +119,25 @@ public sealed class SqlSafetyAnalyzer
             return SqlSafetyResult.Rejected("sp_executesql_not_allowed", "禁止通过 sp_executesql 执行动态 SQL。");
         }
 
-        // System entry points also include prepared statements, cursors and extended
-        // procedures. Reserve their namespaces instead of enumerating SQL executors.
+        // Keep known SQL executors blocked before connecting. Other system names are checked against the catalog.
         if (string.Equals(name.SchemaIdentifier?.Value, "sys", StringComparison.OrdinalIgnoreCase) ||
-            name.BaseIdentifier?.Value.StartsWith("sp_", StringComparison.OrdinalIgnoreCase) == true ||
+            IsSqlExecutor(name.BaseIdentifier?.Value) ||
             name.BaseIdentifier?.Value.StartsWith("xp_", StringComparison.OrdinalIgnoreCase) == true)
         {
             return SqlSafetyResult.Rejected(
                 "system_procedure_not_allowed",
-                "禁止调用 sys 架构或名称以 sp_/xp_ 开头的过程；只允许已审核并单独授权的业务存储过程。");
+                "禁止调用 sys 架构、xp_ 前缀或系统动态 SQL 执行入口；业务过程必须通过对象和权限核验。");
         }
 
+        target = new ProcedureCallTarget(name.SchemaIdentifier?.Value is { Length: > 0 } schema ? schema : "dbo",
+            name.BaseIdentifier!.Value, name.StartOffset, name.FragmentLength);
         return SqlSafetyResult.Allowed();
     }
+
+    private static bool IsSqlExecutor(string? name) => name is not null &&
+        (name.StartsWith("sp_cursor", StringComparison.OrdinalIgnoreCase) ||
+         new[] { "sp_prepare", "sp_prepexec", "sp_prepexecrpc", "sp_execute", "sp_unprepare", "sp_MSforeachtable", "sp_MSforeachdb" }
+             .Contains(name, StringComparer.OrdinalIgnoreCase));
 
     private static ParseResult Parse(string sql)
     {
@@ -419,4 +428,11 @@ public sealed record SqlSafetyResult(bool IsAllowed, string? Code, string? Messa
     public static SqlSafetyResult Allowed() => new(true, null, null);
 
     public static SqlSafetyResult Rejected(string code, string message) => new(false, code, message);
+}
+
+internal sealed record ProcedureCallTarget(string Schema, string Name, int StartOffset, int Length)
+{
+    internal string Qualify(string sql, string database, string schema, string name) =>
+        sql[..StartOffset] + Quote(database) + "." + Quote(schema) + "." + Quote(name) + sql[(StartOffset + Length)..];
+    private static string Quote(string value) => "[" + value.Replace("]", "]]", StringComparison.Ordinal) + "]";
 }

@@ -35,6 +35,7 @@ RETURN
     SELECT
         i.id,
         a.ord,
+        CASE WHEN i.itype = 'grant' THEN i.iname ELSE '' END AS iname,
         CAST(
             CASE i.itype
                 WHEN 'skill' THEN N'### SKILL'
@@ -54,7 +55,7 @@ RETURNS TABLE
 AS
 RETURN
 (
-    SELECT id, ord, desp
+    SELECT id, ord, iname, desp
     FROM dbo.list_capabilities_base(ORIGINAL_LOGIN())
 );
 GO
@@ -80,16 +81,16 @@ GO
 部署后按需单独执行（以下不自动运行）：
 
 -- 管理员读取指定用户目录；这里只模拟目录，不模拟该用户的数据库权限。
-SELECT id, ord, desp
+SELECT id, ord, iname, desp
 FROM dbo.list_capabilities_base(N'DOMAIN\example_user')
 ORDER BY ord, id;
 
 -- 本人目录和访问资格。
-SELECT id, ord, desp FROM dbo.list_capabilities() ORDER BY ord, id;
+SELECT id, ord, iname, desp FROM dbo.list_capabilities() ORDER BY ord, id;
 SELECT dbo.list_capabilities_check() AS can_access;
 
 -- 可选的连续展示序号；不覆盖管理员原始 ord，也不替代 id。
-SELECT ROW_NUMBER() OVER (ORDER BY ord, id) AS row_no, id, ord, desp
+SELECT ROW_NUMBER() OVER (ORDER BY ord, id) AS row_no, id, ord, iname, desp
 FROM dbo.list_capabilities()
 ORDER BY ord, id;
 */

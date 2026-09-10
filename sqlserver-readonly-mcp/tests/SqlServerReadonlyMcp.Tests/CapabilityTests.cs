@@ -159,6 +159,42 @@ public sealed class CapabilityTests
         Assert.Equal(0, store.Reads);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ProcedureGrantIsMandatoryForEveryAccountAndNeverCached(bool ad)
+    {
+        var store = new FakeStore { Allowed = false };
+        var service = Service(Settings(ad: ad), store);
+        Assert.Equal("access_denied", (await service.CheckProcedureAccessAsync("Db", "dbo", "sp_test", CancellationToken.None))?.Category);
+        store.Allowed = true;
+        Assert.Null(await service.CheckProcedureAccessAsync("Db", "dbo", "sp_test", CancellationToken.None));
+        store.Allowed = false;
+        Assert.Equal("access_denied", (await service.CheckProcedureAccessAsync("Db", "dbo", "sp_test", CancellationToken.None))?.Category);
+        Assert.Equal(3, store.Checks);
+        Assert.Equal(0, store.Reads);
+    }
+
+    [Fact]
+    public async Task DisabledCatalogDeniesProcedureWithoutQuerying()
+    {
+        var store = new FakeStore { Allowed = true };
+        Assert.Equal("access_denied", (await Service(Settings(ad: false, enabled: false), store)
+            .CheckProcedureAccessAsync("Db", "dbo", "sp_test", CancellationToken.None))?.Category);
+        Assert.Equal(0, store.Checks);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ProcedureGrantFailureCannotFallBackToDatabasePermission(bool ad)
+    {
+        var service = Service(Settings(ad: ad), new FakeStore { CheckFailure = new InvalidDataException("private") });
+        var error = await service.CheckProcedureAccessAsync("Db", "dbo", "sp_test", CancellationToken.None);
+        Assert.Equal("access_check_unavailable", error?.Category);
+        Assert.DoesNotContain("private", error!.Message);
+    }
+
     private static string Text(CallToolResult result) => Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
     private static CapabilityService Service(McpSettings settings, FakeStore store) => new(settings, store, NullLogger<CapabilityService>.Instance);
     internal static McpSettings Settings(bool ad = true, bool enabled = true, string check = "Db.dbo.check", int pageSize = 100) => new()
@@ -170,6 +206,7 @@ public sealed class CapabilityTests
 
     private sealed class FakeStore : ICapabilityStore
     {
+        public Task<bool> IsProcedureGrantedAsync(string database, string schema, string name, CancellationToken token) => CheckAsync(token);
         public bool Allowed { get; set; }
         public Exception? CheckFailure { get; init; }
         public CapabilityRow[] Rows { get; init; } = [];

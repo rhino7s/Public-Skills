@@ -20,9 +20,9 @@ SQL Server 低权限身份是最终安全边界。默认使用专用 SQL Login�
 
 - `execute_sql` 禁止持久化 DML/DDL、`EXEC`、动态 SQL、远程及 Ad Hoc 数据源、全局临时表和其他有副作用的语法；只允许本地临时对象写入。
 - 写入语句中的表别名和 CTE 名称不得使用 `#` 前缀（包括全角兼容写法），避免把持久化对象伪装成临时表。请使用普通别名，并直接指定实际的 `#本地临时表` 或 `@表变量` 作为写入目标；独立只读语句不受此命名限制。
-- `execute_procedure` 只接受一条静态命名调用，且三段名数据库必须与 `database` 参数一致。拒绝 `sys` 架构及 `sp_`、`xp_` 前缀的过程，不区分大小写，包括 `sp_executesql`、`sp_prepexec` 和游标动态执行入口；业务过程也不能使用这些保留名称。
+- `execute_procedure` 只接受一条静态命名调用，且三段名数据库必须与 `database` 参数一致。允许 `sp_` 前缀业务过程：执行前在同一连接核验目标为可见的用户 procedure（P/PC）、具有 EXECUTE 权限且不与系统对象同名，再以明确三段名执行。省略 schema 时使用 dbo。仍拒绝系统过程、`sys` 架构、`xp_` 前缀及 `sp_executesql`、`sp_prepexec`、游标等动态执行入口。核验与执行不是原子操作，最终权限仍由 SQL Server 控制；能力目录是当前身份的 procedure 执行白名单，每次执行均重新检查，不缓存授权。
 - 每个数据库参数只接受一个明确数据库，不接受数据库列表。Agent 应按用户指定范围查询，禁止无目的枚举或大范围取数；这属于使用约定，SQL 分析器不会判断查询的业务目的，可读取范围仍由数据库权限控制。
-- MCP 不维护业务 SP 白名单。SQL Server 仍会拒绝账号没有权限的资料和过程。
+- 所有账号执行 procedure 前必须匹配目录函数返回的有效 iname；目录未配置、读取失败或无匹配授权均禁止执行。SQL Server 仍会拒绝账号没有权限的资料和过程。
 - MCP 使用的 Windows/AD 身份或 SQL Login 不得加入 `sysadmin`、`db_owner`、`db_ddladmin`，也不应取得数据库级 `GRANT EXECUTE`。
 
 ## 快速开始
@@ -65,7 +65,7 @@ Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码�
 
 ## 开发与发布
 
-源码已支持可选用户能力目录，见 [配置及使用说明](docs/capabilities.md)、[实施方案](docs/capabilities-plan.md)、[函数脚本](docs/create-capabilities-functions.sql) 和 [管理员权限核查](docs/check-capability-permissions.sql)。未配置时维持原有五项工具；功能尚待实际环境联调，不代表现有 Release 已包含此变更。
+源码已支持可选用户能力目录，见 [配置及使用说明](docs/capabilities.md)、[实施方案](docs/capabilities-plan.md)、[函数脚本](docs/create-capabilities-functions.sql) 和 [管理员权限核查](docs/check-capability-permissions.sql)。未配置 listFunction 时仅开放四项通用工具，隐藏 execute_procedure；配置后开放六项工具；功能尚待实际环境联调，不代表现有 Release 已包含此变更。
 
 ```powershell
 .\check-public-repo.ps1

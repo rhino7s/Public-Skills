@@ -32,6 +32,25 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
         }
     }
 
+    public async Task<ToolError?> CheckProcedureAccessAsync(string database, string schema, string name, CancellationToken token)
+    {
+        if (!settings.Capabilities.Enabled) return new("access_denied", "用户没有访问权限");
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            var granted = await store.IsProcedureGrantedAsync(database, schema, name, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            return granted ? null : new("access_denied", "用户没有访问权限");
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning("Procedure catalog authorization failed: {Type}; SQL error {Number}.",
+                exception.GetType().Name, (exception as Microsoft.Data.SqlClient.SqlException)?.Number);
+            var failure = FailureResult(exception, token, checking: true).StructuredContent!.Value;
+            return new(failure.GetProperty("code").GetString()!, failure.GetProperty("message").GetString()!);
+        }
+    }
+
     public static CallToolResult Unavailable() => Error("access_check_unavailable", "访问检查暂不可用，本次操作未执行；可稍后重试，不得绕过检查。");
     private static CallToolResult Canceled() => Error("canceled", "调用已取消。");
     private static CallToolResult FailureResult(Exception exception, CancellationToken token, bool checking)

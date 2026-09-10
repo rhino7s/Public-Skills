@@ -70,3 +70,7 @@ Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页�
 未配置 listFunction 时不注册 execute_procedure。配置后所有账号每次执行都直接查询目录函数的 iname，独立于 AD checkFunction、展示分页和 Agent 历史调用，不缓存授权。skill 的 iname 为空字符串（兼容 NULL/空白）；仅当前身份有效 grant 返回完整三段对象名。函数负责这一契约，MCP 不解析说明文字判断授权。
 
 对象名按数据库、schema、对象分别比较，数据库名通过 DB_ID 解析；schema 和对象名使用目标库目录定序（CATALOG_DEFAULT），不使用数据定序，兼容方括号。未匹配返回 access_denied；查询失败返回安全的不可用/取消状态，不执行业务调用。授权通过后仍核验真实用户 procedure、系统同名冲突及 EXECUTE 权限。检查与执行不是原子事务。无需为 grant 增加对象类型字段。
+
+## 固定提示词
+
+统一指令与工具注册共用 capabilities.Enabled 条件：未启用目录时不提及 list_capabilities 或 execute_procedure。通用安全与范围规则集中在统一指令；工具说明保留用途及调用衔接；参数说明保留格式、默认值、范围和分页关系。启用目录后先读取完整目录，执行 procedure 前仍确认 canExecute=true，参数不明确时读取详情。引用命中须核对 matches 和候选定义，长定义先定位后分段读取。此整理不改变程序授权或 SQL 安全检查。

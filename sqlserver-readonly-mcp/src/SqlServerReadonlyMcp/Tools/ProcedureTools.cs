@@ -19,10 +19,10 @@ public sealed class ProcedureTools(SqlQueryService queryService)
         OutputSchemaType = typeof(QueryResult))]
     [Description(
         "仅允许执行当前身份能力目录明确授权的业务 procedure，且必须由用户明确要求对应业务动作。" +
-        "过程可能修改资料，仅在用户明确要求对应业务动作时使用；输出截断不代表执行中止，execution_unknown 表示未确认执行完成，不得自动重试；" +
-        "允许通过数据库对象及 EXECUTE 权限核验的 sp_ 业务 procedure；省略 schema 时使用 dbo。禁止系统过程、系统同名对象、动态 SQL 入口（包括 sp_executesql、sp_prepexec）、变量过程名、sys 架构、xp_ 前缀、EXECUTE AS、四段名和远程执行；三段名中的数据库必须与 database 参数一致。")]
+        "执行前通过 find_object 或 get_object_details 确认 canExecute=true；参数不明确时先用 get_object_details 读取。" +
+        "execution_unknown 表示未确认执行完成，不得自动重试；不得为补取截断结果而重复执行。")]
     public async Task<CallToolResult> ExecuteProcedureAsync(
-        [Description("单条存储过程调用，例如 EXEC dbo.ExampleProcedure 'a', 1；使用 database.schema.procedure 时，数据库必须与 database 参数一致。")]
+        [Description("单条静态 EXEC 调用，例如 EXEC dbo.ExampleProcedure 'a', 1；省略 schema 时使用 dbo。不接受动态 SQL、变量过程名或远程调用。")]
         string sql,
         [Description("明确的初始数据库；SQL 使用三段名时，其中的数据库必须与此参数一致。")]
         string database,

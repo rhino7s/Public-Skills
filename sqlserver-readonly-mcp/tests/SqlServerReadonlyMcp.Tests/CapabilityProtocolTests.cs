@@ -41,6 +41,12 @@ public sealed class CapabilityProtocolTests
             var catalog = Assert.Single(tools, tool => tool.Name == "list_capabilities");
             Assert.Equal(["offset"], catalog.ProtocolTool.InputSchema.GetProperty("properties").EnumerateObject().Select(p => p.Name).ToArray());
             Assert.DoesNotContain("TestCatalog", client.ServerInstructions);
+            Assert.Equal(McpServerInstructions.Build(true), client.ServerInstructions);
+            Assert.Contains("开始业务操作前读取 list_capabilities", client.ServerInstructions);
+            Assert.Contains("execute_procedure", client.ServerInstructions);
+            Assert.Contains("find_object 或 get_object_details 确认 canExecute=true", procedure.ProtocolTool.Description);
+            Assert.Contains("参数不明确时先用 get_object_details", procedure.ProtocolTool.Description);
+            Assert.Contains("不得自动重试", procedure.ProtocolTool.Description);
             if (ad)
             {
                 foreach (var tool in tools)

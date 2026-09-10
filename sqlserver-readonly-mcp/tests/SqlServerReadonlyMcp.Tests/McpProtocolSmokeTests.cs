@@ -72,7 +72,15 @@ public sealed class McpProtocolSmokeTests : IDisposable
         var tools = await client.ListToolsAsync(cancellationToken: cancellationToken);
 
         Assert.Equal(LatestProtocolVersion, client.NegotiatedProtocolVersion);
-        Assert.Equal(McpServerInstructions.Text, client.ServerInstructions);
+        Assert.Equal(McpServerInstructions.Build(false), client.ServerInstructions);
+        Assert.DoesNotContain("execute_procedure", client.ServerInstructions);
+        Assert.DoesNotContain("list_capabilities", client.ServerInstructions);
+        foreach (var tool in tools)
+        {
+            var published = JsonSerializer.Serialize(tool.ProtocolTool);
+            Assert.DoesNotContain("execute_procedure", published);
+            Assert.DoesNotContain("list_capabilities", published);
+        }
         Assert.Equal(
             ["execute_sql", "find_object", "find_object_references", "get_object_details"],
             tools.Select(tool => tool.Name).Order(StringComparer.Ordinal).ToArray());
@@ -81,10 +89,12 @@ public sealed class McpProtocolSmokeTests : IDisposable
         Assert.DoesNotContain(tools, tool => tool.Name == "execute_procedure");
 
         var executeSqlTool = Assert.Single(tools, tool => tool.Name == "execute_sql");
-        Assert.Contains("NEXT VALUE FOR", executeSqlTool.ProtocolTool.Description);
-        Assert.Contains("OPENROWSET", executeSqlTool.ProtocolTool.Description);
+        Assert.Contains("禁止 EXEC", executeSqlTool.ProtocolTool.Description);
+        Assert.Contains("远程数据源", executeSqlTool.ProtocolTool.Description);
 
         var detailsTool = Assert.Single(tools, tool => tool.Name == "get_object_details");
+        Assert.Contains("先用 definitionSearch", detailsTool.ProtocolTool.Description);
+        Assert.Contains("startLine/maxLines", detailsTool.ProtocolTool.Description);
         var detailsSchema = Assert.NotNull(detailsTool.ProtocolTool.OutputSchema);
         var detailsProperties = detailsSchema.GetProperty("properties");
         Assert.True(detailsProperties.TryGetProperty("canExecute", out _));
@@ -121,6 +131,7 @@ public sealed class McpProtocolSmokeTests : IDisposable
         var referenceTool = Assert.Single(tools, tool => tool.Name == "find_object_references");
         Assert.Equal("查找 SQL Server 对象文本引用候选", referenceTool.ProtocolTool.Title);
         Assert.Contains("不得直接称为实际调用方", referenceTool.ProtocolTool.Description);
+        Assert.Contains("必须查看 matches 并按需读取候选定义", referenceTool.ProtocolTool.Description);
         Assert.Contains("zold", referenceTool.ProtocolTool.Description, StringComparison.OrdinalIgnoreCase);
         var referenceSchema = Assert.NotNull(referenceTool.ProtocolTool.OutputSchema);
         var referenceProperties = referenceSchema.GetProperty("properties");

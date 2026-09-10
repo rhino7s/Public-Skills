@@ -30,13 +30,11 @@ public sealed class SqlServerTools
         UseStructuredContent = true,
         OutputSchemaType = typeof(QueryResult))]
     [Description(
-        "执行受限查询以核对资料或业务逻辑。应指定字段并使用 WHERE、聚合或较小的 TOP 控制范围；" +
-        "允许变量、CTE、跨库三段名，以及对本地临时表或表变量写入；写入语句中的表别名和 CTE 名称不得以 # 开头；" +
-        "禁止持久化 DML、嵌套 DML 数据源、DDL、USE、EXEC/EXECUTE（包括 INSERT ... EXEC）、NEXT VALUE FOR、全局临时表，" +
-        "以及四段名、OPENQUERY、OPENROWSET、OPENDATASOURCE 等显式远程或 Ad Hoc 数据源。" +
-        "精确核对不默认使用 NOLOCK。每次调用独立执行。本地临时表（#）、变量及事务状态不能跨调用复用；依赖这些状态的 SQL 必须放在同一次调用中完成。")]
+        "执行只读查询，优先指定字段并用 WHERE、聚合或 TOP 控制范围；精确核对不默认使用 NOLOCK。" +
+        "允许本地临时表（#）和表变量，禁止 EXEC、全局临时表及远程数据源。" +
+        "每次调用独立执行。本地临时表（#）、变量及事务状态不能跨调用复用；依赖这些状态的 SQL 必须放在同一次调用中完成。")]
     public async Task<CallToolResult> ExecuteSqlAsync(
-        [Description("完整 T-SQL 查询批次；优先指定字段并控制范围。持久化修改、INSERT ... EXEC、嵌套 DML、序列取号及显式远程或 Ad Hoc 数据源会在连接数据库前被拒绝。")]
+        [Description("完整 T-SQL 查询批次。")]
         string sql,
         [Description("明确的初始数据库；SQL 内仍可使用 database.schema.object 跨库查询。")]
         string database,
@@ -62,8 +60,8 @@ public sealed class SqlServerTools
         UseStructuredContent = true,
         OutputSchemaType = typeof(ObjectSearchResult))]
     [Description(
-        "在指定数据库定位明确对象。默认精确匹配，仅在名称不确定时使用模糊匹配；" +
-        "省略 schema 时使用 dbo，模糊匹配关键词至少 3 个字符、最多返回 20 项。" +
+        "按名称定位对象，名称不确定时才使用模糊匹配；" +
+        "模糊匹配最多返回 20 项。" +
         "存储过程额外返回 canExecute；无结果只表示当前账号未发现该对象，不能证明对象不存在。")]
     public async Task<CallToolResult> FindObjectAsync(
         [Description("对象名、schema.object 或 database.schema.object；省略 schema 时默认为 dbo。")]
@@ -99,9 +97,9 @@ public sealed class SqlServerTools
         OutputSchemaType = typeof(ObjectReferenceSearchResult))]
     [Description(
         "先确认 targetDatabase 中的目标对象，再搜索 searchDatabase 的模块定义；includeJobs=true 时附加搜索 SQL Agent Job Step。" +
-        "结果仅是目标对象名称的原始文本命中候选，不判断注释、对象自身定义、动态 SQL 是否执行，也不标注读取、写入或执行类型。" +
+        "命中可能来自注释、对象自身定义或动态 SQL，不区分读、写、执行。" +
         "必须查看 matches 并按需读取候选定义后再判断，不得直接称为实际调用方或完整血缘。" +
-        "来源模块自动排除名称以 zold 开头的废弃对象；具体匹配范围及分页硬上限见参数说明。")]
+        "排除名称以 zold 开头的来源模块。")]
     public async Task<CallToolResult> FindObjectReferencesAsync(
         [Description("目标对象所在的单一数据库；仅用于精确确认目标，可与 searchDatabase 不同。")]
         string targetDatabase,
@@ -147,10 +145,10 @@ public sealed class SqlServerTools
         UseStructuredContent = true,
         OutputSchemaType = typeof(ObjectDetailsResult))]
     [Description(
-        "读取明确对象的字段、索引、参数、权限和定义。省略 schema 时使用 dbo；" +
+        "读取明确对象的字段、索引、参数、权限和定义；" +
         "长定义先用 definitionSearch 获取命中行，再按 startLine/maxLines 读取所需上下文。")]
     public async Task<CallToolResult> GetObjectDetailsAsync(
-        [Description("对象名称：object、schema.object 或 database.schema.object。")]
+        [Description("对象名、schema.object 或 database.schema.object；省略 schema 时使用 dbo。")]
         string objectName,
         [Description("明确的数据库；objectName 使用三段名时，其中的数据库必须与此参数一致。")]
         string database,

@@ -49,8 +49,7 @@ public static class Program
             builder.Services.AddSingleton<CapabilityService>();
             var toolJsonOptions = CreateToolJsonOptions();
             var mcp = builder.Services
-                .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Text +
-                    (settings.Capabilities.Enabled ? "\n\n开始业务操作前读取 list_capabilities 并遵守返回的业务说明；分页未结束时继续读取。收到 access_denied 后停止调用本 MCP；检查或目录暂不可用时停止本次业务操作，可稍后重试；调用取消后不自动重试。不得尝试其他工具路径绕过检查。" : string.Empty))
+                .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Build(settings.Capabilities.Enabled))
                 .WithStdioServerTransport()
                 .WithTools<SqlServerTools>(serializerOptions: toolJsonOptions)
                 .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>

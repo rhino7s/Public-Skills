@@ -247,9 +247,8 @@ public sealed class SqlQueryService
             }
             while (await reader.NextResultAsync(executionToken).ConfigureAwait(false));
 
-            resultSizeBytes = JsonSerializer.SerializeToUtf8Bytes(resultSets).Length;
             totalStopwatch.Stop();
-            var success = new QueryResult(
+            var success = FinalizeDelivery(new QueryResult(
                 true,
                 requestId,
                 resultSets,
@@ -260,7 +259,7 @@ public sealed class SqlQueryService
                 truncated,
                 truncationReason,
                 truncated ? limitGuidance : null,
-                null);
+                null));
             WriteAudit(success, tool, database, sql, null);
             return success;
         }
@@ -270,7 +269,7 @@ public sealed class SqlQueryService
             var cause = cancellationToken.IsCancellationRequested ? "调用方取消" :
                 exception is OperationCanceledException || exception is SqlException { Number: -2 } ? "执行超时" : "执行或结果读取失败";
             var failed = Failure(requestId, resultSets, returnedRows,
-                JsonSerializer.SerializeToUtf8Bytes(resultSets).Length, queueWaitMilliseconds,
+                resultSizeBytes, queueWaitMilliseconds,
                 totalStopwatch.ElapsedMilliseconds,
                 new ToolError("execution_unknown", $"{cause}，procedure 未确认执行完成，可能已有部分操作生效；不得自动重试。",
                     (exception as SqlException)?.Number, (exception as SqlException)?.State, (exception as SqlException)?.Class))
@@ -403,6 +402,12 @@ public sealed class SqlQueryService
         };
     }
 
+    internal static QueryResult FinalizeDelivery(QueryResult result) => result with
+    {
+        ReturnedRows = result.ResultSets.Sum(set => set.Rows.Count),
+        ResultSizeBytes = result.ResultSets.Count == 0 ? 0 : JsonSerializer.SerializeToUtf8Bytes(result.ResultSets, Program.CreateToolJsonOptions()).Length,
+    };
+
     private static QueryResult Failure(
         string requestId,
         IReadOnlyList<ResultSetResult> resultSets,
@@ -411,7 +416,7 @@ public sealed class SqlQueryService
         long queueWaitMilliseconds,
         long durationMilliseconds,
         ToolError error) =>
-        new(
+        FinalizeDelivery(new QueryResult(
             false,
             requestId,
             resultSets,
@@ -422,7 +427,7 @@ public sealed class SqlQueryService
             false,
             null,
             null,
-            error);
+            error));
 
     private void WriteAudit(
         QueryResult result,

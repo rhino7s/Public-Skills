@@ -9,7 +9,9 @@ SQL Server 低权限身份是最终安全边界。默认使用专用 SQL Login�
 | 工具 | 用途 |
 | --- | --- |
 | `execute_sql` | 执行受限查询；允许变量、CTE、表变量和本地临时表。 |
-| `execute_procedure` | 执行当前账号已获对象级权限的单一静态存储过程调用。 |
+| `execute_procedure` | 启用目录后，执行当前身份目录明确授权且具有 SQL 执行权限的单一业务 procedure。 |
+| `list_capabilities` | 启用目录后，分页读取当前身份的能力摘要。 |
+| `get_capability_details` | 启用目录后，按摘要 id 读取适用能力的完整说明。 |
 | `find_object` | 在明确数据库中定位 Table、View、SP 或 Function，并检查 SP 执行权限。 |
 | `find_object_references` | 搜索对象定义和可选 Job 中的原始文本命中候选。 |
 | `get_object_details` | 读取对象字段、索引、参数、权限和定义片段。 |
@@ -65,7 +67,7 @@ Windows 内网建议将 AD 安全群组映射为 SQL Server Login；SQL 密码�
 
 ## 开发与发布
 
-源码已支持可选用户能力目录，见 [配置及使用说明](docs/capabilities.md)、[实施方案](docs/capabilities-plan.md)、[函数脚本](docs/create-capabilities-functions.sql) 和 [管理员权限核查](docs/check-capability-permissions.sql)。未配置 listFunction 时仅开放四项通用工具，隐藏 execute_procedure；配置后开放六项工具；功能尚待实际环境联调，不代表现有 Release 已包含此变更。
+源码已支持可选用户能力目录，见 [配置及使用说明](docs/capabilities.md)、[实施方案](docs/capabilities-plan.md)、[函数脚本](docs/create-capabilities-functions.sql) 和 [管理员权限核查](docs/check-capability-permissions.sql)。未配置 listFunction 时仅开放四项通用工具，隐藏 execute_procedure；配置后开放七项工具（含摘要目录及按需详情）；已使用本项目开发程序完成摘要、详情及检查的只读联调，不代表现有 Release 已包含此变更。
 
 ```powershell
 .\check-public-repo.ps1

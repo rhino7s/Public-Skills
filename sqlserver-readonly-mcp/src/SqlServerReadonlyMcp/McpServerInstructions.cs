@@ -12,6 +12,6 @@ internal static class McpServerInstructions
 
     internal static string Build(bool capabilitiesEnabled) => capabilitiesEnabled
         ? "仅允许只读查询及通过 execute_procedure 调用已授权、用户明确要求的业务 procedure，不得以修改 SQL 替代 procedure。\n\n" + Common +
-          "\n\n开始业务操作前读取 list_capabilities，按分页提示读取完整并遵守业务说明。收到 access_denied 后停止调用本 MCP；检查或目录暂不可用时停止本次业务操作，可稍后重试；调用取消后不自动重试。"
+          "\n\n开始业务操作前读取 list_capabilities 的完整摘要目录，判断所有适用条目；has_desp=true 时先用 get_capability_details 读取详情并遵守，false 时以 summary 为完整说明。收到 access_denied 后停止调用本 MCP；检查或目录暂不可用时停止本次业务操作，可稍后重试；调用取消后不自动重试。"
         : "仅允许只读查询。\n\n" + Common;
 }

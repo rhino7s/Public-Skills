@@ -1,6 +1,6 @@
 # 用户能力目录实施方案
 
-状态：核心 MCP 配置、工具注册、统一前置检查与 Markdown 分页已实现；自动测试通过后仍需管理员配置进行真实环境联调。运行方式见 [使用说明](capabilities.md)。配套 [建表脚本](create-capabilities-tables.sql)、[函数创建脚本](create-capabilities-functions.sql) 和 [权限核查脚本](check-capability-permissions.sql) 不自动部署或授权；用户已自行建立表和函数，本次不更改数据库。
+状态：核心 MCP 配置、工具注册、统一前置检查与摘要分页已实现；自动测试通过后仍需管理员配置进行真实环境联调。运行方式见 [使用说明](capabilities.md)。配套 [建表脚本](create-capabilities-tables.sql)、[函数创建脚本](create-capabilities-functions.sql) 和 [权限核查脚本](check-capability-permissions.sql) 不自动部署或授权；用户已自行建立表和函数，本次不更改数据库。
 
 ## 目标与边界
 
@@ -40,9 +40,9 @@
 
 | 表 | 字段及用途 |
 | --- | --- |
-| `tools_info` | `id int identity`；`itype varchar(5)`；`iname varchar(150)`；`desp nvarchar(max)`；内部 `remark nvarchar(max)`；`upd_time datetime DEFAULT GETDATE()`；`active bit` |
-| `tools_role_group` | `rid int identity`；`rname varchar(50)`；`tool_id int`；`ord int NOT NULL`，管理员显式填写；内部 `remark`；`upd_time` |
-| `tools_grant` | `gid int identity`；`u_name nvarchar(128)`；`rname varchar(50)`；内部 `remark`；`upd_time`；`active bit` |
+| `tools_info` | `id int identity`；`itype varchar(5)`；`iname varchar(150)`；`summary nvarchar(1000) NOT NULL`；`desp nvarchar(max) NOT NULL`；内部 `remark nvarchar(max)`；`upd_time datetime DEFAULT GETDATE()`；`active bit` |
+| `tools_role_group` | `rid int identity`；`rname varchar(50)`；`tool_id int`；`ord int NOT NULL`，管理员显式填写；`active bit NOT NULL DEFAULT (1)`；内部 `remark`；`upd_time` |
+| `tools_grant` | `gid int identity`；`u_name nvarchar(128)`；`rname varchar(50)`；`ord int NOT NULL DEFAULT (0)`；内部 `remark`；`upd_time`；`active bit` |
 
 约束和维护规则：
 
@@ -58,12 +58,12 @@
 
 ## 有效能力与顺序
 
-有效记录必须同时满足 `tools_grant.active=1` 和 `tools_info.active=1`，通过 rname、tool_id 关联。
+有效记录必须同时满足 `tools_grant.active=1`、`tools_role_group.active=1` 和 `tools_info.active=1`，通过 rname、tool_id 关联。停用单条角色组关联仅影响经该关联授予的能力；同一能力仍有其他有效授权路径时继续可见，排序从剩余有效路径选取。
 
-- 多角色重复赋予同一 id，合并为一条，取这些有效关联的 `MIN(ord)`。
-- ord 可为任意 int（含负数、重复值和不连续值），仅作为排序权重。
-- 最终以 `(ord ASC, id ASC)` 确定稳定顺序。
-- 不修改管理员的原始 ord。第一版不增加连续序号字段；若需要展示连续序号，可在去重后按上述顺序计算 `ROW_NUMBER()`，只供展示，不替代 id 或分页 offset。
+- 多角色重复赋予同一 id，按 `tools_grant.ord → tools_role_group.ord` 成对选取最靠前位置，合并为一条；禁止分别 MIN 后拼接。
+- 两张表的原始 ord 可为任意 int（含负数、重复值和不连续值），分别作为角色组及组内排序权重。
+- 去重后以 `(grant ord ASC, role group ord ASC, id ASC)` 生成最终连续序号，转换为 int ord；MCP 继续按 `(ord ASC, id ASC)` 分页。
+- 不修改管理员的原始 ord。返回 ord 为从 1 开始的展示序号，不替代稳定 id 或分页 offset；授权变化后展示序号可能变化。已有环境先执行 migrate-capability-grant-order.sql，再部署目录函数。
 - 单个角色授权停用但其他有效角色仍赋予同一能力时，该能力仍有效。
 
 ## 数据库函数及权限
@@ -80,42 +80,19 @@
 
 base 只模拟目录，不模拟目标用户实际 SQL 权限。MCP 仅知道配置的两个公开函数，无需知道 base 或任何底表名称。
 
-## 公开目录契约与 Markdown
+## 公开目录契约
 
-目录函数固定返回以下四列；MCP 显式选择并验证，不把额外列原样传给 Agent：
+当前摘要/详情契约以 [使用说明](capabilities.md) 与 [实施计划](cb-practice-improvement-plan.md) 为准：函数返回 id、ord、iname、summary、has_desp、desp 六列。summary 必须非空白；desp 非 NULL，按原文返回，has_desp 按 SQL 的 desp <> N'' 转为 bit，不进行额外空白归一化。两者均不自动添加类型标题。
 
-| 字段 | 约束 |
-| --- | --- |
-| `id` | 非空 int，当前目录内唯一，辅助稳定排序 |
-| `ord` | 非空 int，去重后的排序权重 |
-| `iname` | 文本；skill 为空白（兼容 NULL），当前身份有效 grant 返回三段对象名，用于 procedure 强制授权 |
-| `desp` | 非空完整说明，已由函数组合标题及正文 |
-
-函数负责把后台条目统一转为说明：
-
-```markdown
-### SKILL
-
-当前用户的业务使用规则或知识说明……
-
-### 对象：OrderDB.dbo.QueryOrderStatus
-
-用于查询订单当前状态……
-```
-
-每笔 skill 都有固定 `### SKILL` 标题；每笔 grant 都有对象标题。后台 desp 维护正文，不要求再重复固定标题。正文可用 Markdown，不强制章节模板。不要在返回内容中放入 itype、remark、账号或角色关联信息。
-
-函数输出顺序不能作为保证，MCP 必须显式 `ORDER BY ord, id`。MCP 按记录顺序以分隔线拼接 desp，通过 `content.text` 返回 Markdown，不重复提供完整 structuredContent；现有其他工具的返回方式不变。这些内容是工具返回的业务说明，不提升为系统指令。
-
-默认业务限制、开发人员扩展探索说明均维护在表中，不硬编码在 MCP。程序说明仅要求先读取目录、遵守相关业务说明、拒绝后停止调用，并保留既有 SQL 安全限制。
+list_capabilities 只选取摘要字段并返回 structuredContent；get_capability_details(id) 从同一无参数函数筛选当前身份的单条完整说明。content.text 只作简短摘要。remark、itype、账号与角色关联不公开。固定提示词要求先读完整摘要目录，再读适用且有详情的条目；业务范围继续由目录维护。
 
 ## 分页与工具行为
 
-只新增 `list_capabilities(offset=0)`；不提供用户名、关键词、类型、id 或页大小参数。offset 为非负整数。
+目录使用 `list_capabilities(offset=0)`；无用户名、关键词、类型或页大小参数。详情使用 `get_capability_details(id)`，id 为正整数。
 
 - 首次调用不需传参数；后续按响应中的 next_offset 继续读取。
 - 最多读取 pageSize 条并额外探测一条以确定 has_more。
-- 响应末尾以明确文字列出本页条数、has_more 和 next_offset（结束为 null），不暗示未读取页面已完整提供。
+- structuredContent 列出本页条数、has_more 和 next_offset（结束为 null），不暗示未读取页面已完整提供。
 - 先应用现有响应大小限制，预留分页尾部空间，在完整记录间结束本页；next_offset 按实际返回记录数推进。
 - 不静默截断单条说明。下一条本身无法放入空页时明确报错，避免返回零条且反复续取。
 - 越界 offset 返回空页且 has_more=false；不能因为当前页为空认定用户无权限。
@@ -161,11 +138,11 @@ Codex 当前已配置真实可用的 MCP，但本项目的验证禁止调用该�
 ### 实施顺序与检查项
 
 1. 已提供方案、三表 DDL、三个函数脚本和最小权限示例；保留用户手工简化的建表文件。
-2. 已实现 MCP 配置校验、目录读取、统一检查、可选注册和 Markdown 分页。
+2. 已实现 MCP 配置校验、目录读取、统一检查、可选注册和摘要分页。
 3. 已提供自动单元与开发进程协议测试、使用说明和独立管理员核查脚本。
 4. 待管理员配置开发中 MCP 后进行真实数据库验证与性能测量；本次不调用已有真实 MCP，不改实际表、函数或权限。
 
-验收覆盖：关闭功能兼容旧行为；AD 所有入口被统一拦截；SQL 账号不误拦截；动态撤销恢复；check 异常拒绝；多角色去重和任意 ord；Markdown 标题；长记录与分页边界；底表和 base 不可直读；无 remark 泄漏；两种目录说明（受控用户、开发人员）；实际检查延迟。
+验收覆盖：关闭功能兼容旧行为；AD 所有入口被统一拦截；SQL 账号不误拦截；动态撤销恢复；check 异常拒绝；多角色去重和任意 ord；原文 Markdown 保留；长记录与分页边界；底表和 base 不可直读；无 remark 泄漏；两种目录说明（受控用户、开发人员）；实际检查延迟。
 
 权限失败必须有独立用例：AD 开启目录，检查函数存在但账号没有 EXECUTE 时，所有业务工具均返回 access_denied／用户没有访问权限，且不执行后续目录查询或业务操作；不得退回通用模式或尝试其他身份。实际撤权测试仅在明确用于测试的账号与环境中进行，不修改当前真实 MCP 的账号权限。
 

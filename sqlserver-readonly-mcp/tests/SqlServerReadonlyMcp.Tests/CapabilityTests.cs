@@ -95,34 +95,79 @@ public sealed class CapabilityTests
     }
 
     [Fact]
-    public async Task PagesMarkdownWithoutDuplicatingStructuredContent()
+    public async Task PagesSummariesWithoutDescriptionsOrDuplicatingText()
     {
-        var store = new FakeStore { Rows = [new(7, -5, "### SKILL\n\nrule"), new(2, 99, "### 对象：Db.dbo.p\n\nbody"), new(3, 99, "last")] };
+        var store = new FakeStore { Rows = [new(7, -5, "rule", ObjectName: "", HasDescription: true), new(2, 99, "business", ObjectName: "Db.dbo.p"), new(3, 99, "last")] };
         var service = Service(Settings(pageSize: 2), store);
         var first = await service.ListAsync(0, CancellationToken.None);
-        Assert.Null(first.StructuredContent);
-        Assert.Contains("### SKILL", Text(first));
-        Assert.Contains("### 对象：Db.dbo.p", Text(first));
-        Assert.DoesNotContain("last", Text(first));
-        Assert.Contains("has_more=true；next_offset=2", Text(first));
+        var content = first.StructuredContent!.Value;
+        Assert.Equal(2, content.GetProperty("items").GetArrayLength());
+        Assert.Equal(7, content.GetProperty("items")[0].GetProperty("id").GetInt32());
+        Assert.True(content.GetProperty("items")[0].GetProperty("has_desp").GetBoolean());
+        Assert.False(content.GetProperty("items")[0].TryGetProperty("desp", out _));
+        Assert.DoesNotContain("business", Text(first));
+        Assert.Equal(2, content.GetProperty("next_offset").GetInt64());
         var second = await service.ListAsync(2, CancellationToken.None);
-        Assert.Contains("last", Text(second));
-        Assert.Contains("has_more=false；next_offset=null", Text(second));
+        Assert.Equal("last", second.StructuredContent!.Value.GetProperty("items")[0].GetProperty("summary").GetString());
+        Assert.False(second.StructuredContent.Value.GetProperty("has_more").GetBoolean());
         Assert.Equal((2L, 3), store.LastRequest);
     }
 
     [Fact]
-    public async Task SizeLimitStopsAtWholeRowAndNextPageReportsOversizedItem()
+    public async Task SizeLimitStopsAtWholeSummaryAndNeverFallsBackToDetails()
     {
-        var store = new FakeStore { Rows = [new(1, 0, "first"), new(2, 0, new string('中', 20_000))] };
+        var store = new FakeStore { Rows = [new(1, 0, "first"), new(2, 0, new string('中', 20_000), Oversized: true)] };
         var service = Service(Settings(), store);
         var first = await service.ListAsync(0, CancellationToken.None);
-        Assert.Contains("next_offset=1", Text(first));
-        Assert.DoesNotContain("中", Text(first));
+        Assert.Equal(1, first.StructuredContent!.Value.GetProperty("next_offset").GetInt64());
         var second = await service.ListAsync(1, CancellationToken.None);
         Assert.True(second.IsError);
         Assert.Equal("capability_too_large", second.StructuredContent!.Value.GetProperty("code").GetString());
         Assert.True(JsonSerializer.SerializeToUtf8Bytes(first, Program.CreateToolJsonOptions()).Length < 16 * 1024);
+        Assert.Equal(0, store.DetailReads);
+    }
+
+    [Fact]
+    public async Task DetailsPreserveMarkdownAndTrustDatabaseHasDescriptionFlag()
+    {
+        var store = new FakeStore { Detail = new(1, "Db.dbo.p", "summary", true, "### 参数\n\n```sql\nSELECT 1;\n```") };
+        var service = Service(Settings(), store);
+        var first = await service.DetailsAsync(1, CancellationToken.None);
+        Assert.Equal(store.Detail.Description, first.StructuredContent!.Value.GetProperty("desp").GetString());
+        Assert.DoesNotContain("SELECT", Text(first));
+        store.Detail = new(1, "", "summary", true, "\r\n\t");
+        Assert.NotEqual(true, (await service.DetailsAsync(1, CancellationToken.None)).IsError);
+        store.Detail = new(1, "", "summary", false, "   ");
+        var noDetails = await service.DetailsAsync(1, CancellationToken.None);
+        Assert.False(noDetails.StructuredContent!.Value.GetProperty("has_desp").GetBoolean());
+        Assert.Equal("   ", noDetails.StructuredContent.Value.GetProperty("desp").GetString());
+        store.Detail = null;
+        Assert.Equal("access_denied", (await service.DetailsAsync(1, CancellationToken.None)).StructuredContent!.Value.GetProperty("code").GetString());
+        Assert.Equal(4, store.DetailReads);
+    }
+
+    [Fact]
+    public async Task InvalidDetailsAndOversizeFailWithoutPartialBody()
+    {
+        foreach (var row in new CapabilityDetail[] {
+            new(2, "", "summary", true, "private"), new(1, "", " ", true, "private"),
+            new(1, "", "summary", true, ""), new(1, "", "summary", true, null!) })
+        {
+            var result = await Service(Settings(), new FakeStore { Detail = row }).DetailsAsync(1, CancellationToken.None);
+            Assert.Equal("capabilities_unavailable", result.StructuredContent!.Value.GetProperty("code").GetString());
+            Assert.DoesNotContain("private", Text(result));
+        }
+        var oversized = await Service(Settings(), new FakeStore { Detail = new(1, "", "summary", true, new string('a', 20_000)) }).DetailsAsync(1, CancellationToken.None);
+        Assert.Equal("capability_too_large", oversized.StructuredContent!.Value.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task InvalidIdAndDisabledCatalogDoNotReadDetails()
+    {
+        var store = new FakeStore();
+        Assert.True((await Service(Settings(), store).DetailsAsync(0, CancellationToken.None)).IsError);
+        Assert.True((await Service(Settings(enabled: false), store).DetailsAsync(1, CancellationToken.None)).IsError);
+        Assert.Equal(0, store.DetailReads);
     }
 
     [Fact]
@@ -195,6 +240,54 @@ public sealed class CapabilityTests
         Assert.DoesNotContain("private", error!.Message);
     }
 
+    [Fact]
+    public async Task DetailsFailureAndCancellationDoNotLeakDiagnostics()
+    {
+        foreach (var (exception, code) in new (Exception, string)[] {
+            (new InvalidDataException("private duplicate id or invalid type"), "capabilities_unavailable"),
+            (new TimeoutException("private server"), "capabilities_unavailable"),
+            (new UnauthorizedAccessException("private object"), "access_denied") })
+        {
+            var result = await Service(Settings(), new FakeStore { DetailFailure = exception }).DetailsAsync(1, CancellationToken.None);
+            Assert.Equal(code, result.StructuredContent!.Value.GetProperty("code").GetString());
+            Assert.DoesNotContain("private", Text(result));
+        }
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var store = new FakeStore();
+        Assert.Equal("canceled", (await Service(Settings(), store).DetailsAsync(1, canceled.Token)).StructuredContent!.Value.GetProperty("code").GetString());
+        Assert.Equal(0, store.DetailReads);
+    }
+
+    [Fact]
+    public void SummaryProjectionDoesNotRequestBody()
+    {
+        Assert.Equal(new[] { "id", "ord", "iname", "summary", "has_desp" }, CapabilityStore.SummaryProjection.Split(", "));
+    }
+
+    [Fact]
+    public async Task ManyUnrelatedBodiesStayOutOfTaskResponses()
+    {
+        // Synthetic CB inventory + market scenario: one mandatory rule, two relevant bodies, many unrelated bodies.
+        var rows = Enumerable.Range(1, 40).Select(id => new CapabilityRow(id, id, id <= 3 ? "适用规则或 CB 库存行情" : "其他业务", HasDescription: true)).ToArray();
+        var store = new FakeStore { Rows = rows };
+        var service = Service(Settings(), store);
+        var page = await service.ListAsync(0, CancellationToken.None);
+        var newBytes = JsonSerializer.SerializeToUtf8Bytes(page, Program.CreateToolJsonOptions()).Length;
+        var body = new string('中', 1000);
+        for (var id = 1; id <= 3; id++)
+        {
+            store.Detail = new(id, "", rows[id - 1].Summary, true, body);
+            var detail = await service.DetailsAsync(id, CancellationToken.None);
+            Assert.False(detail.IsError);
+            newBytes += JsonSerializer.SerializeToUtf8Bytes(detail, Program.CreateToolJsonOptions()).Length;
+        }
+        var oldBytes = JsonSerializer.SerializeToUtf8Bytes(new { desp = string.Join("\n\n", rows.Select(_ => body)) }, Program.CreateToolJsonOptions()).Length;
+        Assert.True(newBytes < oldBytes);
+        Assert.Equal(1, store.Reads);
+        Assert.Equal(3, store.DetailReads); // Four new calls rather than one full-text call; no claim of fewer calls.
+    }
+
     private static string Text(CallToolResult result) => Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
     private static CapabilityService Service(McpSettings settings, FakeStore store) => new(settings, store, NullLogger<CapabilityService>.Instance);
     internal static McpSettings Settings(bool ad = true, bool enabled = true, string check = "Db.dbo.check", int pageSize = 100) => new()
@@ -207,6 +300,14 @@ public sealed class CapabilityTests
     private sealed class FakeStore : ICapabilityStore
     {
         public Task<bool> IsProcedureGrantedAsync(string database, string schema, string name, CancellationToken token) => CheckAsync(token);
+        public CapabilityDetail? Detail { get; set; }
+        public int DetailReads { get; private set; }
+        public Exception? DetailFailure { get; init; }
+        public Task<CapabilityDetail?> ReadDetailsAsync(int id, int maximumCharacters, CancellationToken token)
+        {
+            DetailReads++;
+            return DetailFailure is null ? Task.FromResult(Detail) : Task.FromException<CapabilityDetail?>(DetailFailure);
+        }
         public bool Allowed { get; set; }
         public Exception? CheckFailure { get; init; }
         public CapabilityRow[] Rows { get; init; } = [];

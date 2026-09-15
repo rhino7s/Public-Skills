@@ -9,6 +9,105 @@ namespace SqlServerReadonlyMcp.Tests;
 
 public sealed class SqlServerIntegrationTests
 {
+    [Fact(Timeout = 60_000, Skip = "未配置开发中 MCP 排序验证。", SkipUnless = nameof(IsQueryConfigured))]
+    public async Task CapabilityGrantOrderUsesPairedPositionAndStablePaging()
+    {
+        var token = TestContext.Current.CancellationToken;
+        await using var client = await McpClient.CreateAsync(CreateTransport(RequiredEnvironmentVariable(ConfigVariable), "cap-order-integration"), cancellationToken: token);
+        long offset = 0;
+        while (true)
+        {
+            var directory = await client.CallToolAsync("list_capabilities", new Dictionary<string, object?> { ["offset"] = offset }, cancellationToken: token);
+            Assert.False(directory.IsError); // 拒绝时不继续调用；本测试只查询表变量，不执行业务对象。
+            var page = Assert.NotNull(directory.StructuredContent);
+            if (!page.GetProperty("has_more").GetBoolean()) break;
+            var next = page.GetProperty("next_offset").GetInt64();
+            Assert.True(next > offset);
+            offset = next;
+        }
+        var result = await client.CallToolAsync("execute_sql", new Dictionary<string, object?>
+        {
+            ["database"] = RequiredEnvironmentVariable(QueryDatabaseVariable),
+            ["sql"] = CapabilityOrderSqlTests.BuildFixture(),
+        }, cancellationToken: token);
+        var body = Assert.NotNull(result.StructuredContent);
+        AssertToolSucceeded(result, body);
+        Assert.False(body.GetProperty("truncated").GetBoolean());
+        var sets = body.GetProperty("resultSets").EnumerateArray().ToArray();
+        Assert.Equal(6, sets.Length);
+        Assert.Equal(new[] { 4, 5, 1, 2, 3 }, Ids(sets[0]));
+        Assert.Equal(new[] { 1, 2 }, Ids(sets[1]));
+        Assert.Equal(new[] { 1, 3, 4, 5, 2 }, Ids(sets[2])); // grant ord 全为 0 时保留旧顺序。
+        Assert.Equal(new[] { 5, 1, 2 }, Ids(sets[3])); // B 停用后 X 回退 A；单独停用 W 不影响同组 V。
+        Assert.Equal(new[] { 1, 3, 4, 5, 2 }, Ids(sets[4])); // 恢复关联。
+        Assert.Empty(Ids(sets[5])); // 所有关联停用后无有效能力。
+        Assert.Equal(new[] { 1, 2, 3, 4, 5 }, sets[0].GetProperty("rows").EnumerateArray().Select(r => r[1].GetInt32()));
+        Assert.Equal("int", sets[0].GetProperty("columns")[1].GetProperty("dataType").GetString());
+
+        static int[] Ids(JsonElement set) => set.GetProperty("rows").EnumerateArray().Select(r => r[0].GetInt32()).ToArray();
+    }
+
+    [Fact(Timeout = 60_000, Skip = "未配置真实目录测试。", SkipUnless = nameof(IsQueryConfigured))]
+    public async Task CapabilitySummariesAndDetailsUseCurrentFunction()
+    {
+        var token = TestContext.Current.CancellationToken;
+        await using var client = await McpClient.CreateAsync(CreateTransport(RequiredEnvironmentVariable(ConfigVariable), "cap-summary-integration"), cancellationToken: token);
+        var tools = await client.ListToolsAsync(cancellationToken: token);
+        if (!tools.Any(t => t.Name == "list_capabilities")) return;
+        Assert.Equal(7, tools.Count);
+        var page = await client.CallToolAsync("list_capabilities", new Dictionary<string, object?>(), cancellationToken: token);
+        Assert.False(page.IsError);
+        var content = Assert.NotNull(page.StructuredContent);
+        foreach (var item in content.GetProperty("items").EnumerateArray())
+        {
+            Assert.False(item.TryGetProperty("desp", out _));
+            Assert.False(string.IsNullOrWhiteSpace(item.GetProperty("summary").GetString()));
+            var detail = await client.CallToolAsync("get_capability_details", new Dictionary<string, object?> { ["id"] = item.GetProperty("id").GetInt32() }, cancellationToken: token);
+            Assert.False(detail.IsError);
+            var body = Assert.NotNull(detail.StructuredContent);
+            Assert.Equal(item.GetProperty("id").GetInt32(), body.GetProperty("id").GetInt32());
+            Assert.Equal(JsonValueKind.String, body.GetProperty("desp").ValueKind);
+            if (body.GetProperty("has_desp").GetBoolean()) Assert.True(body.GetProperty("desp").GetString()!.Length > 0);
+            break; // One live detail is enough; do not load all business descriptions.
+        }
+    }
+
+    [Theory(Timeout = 60_000, Skip = "未配置部分失败查询测试。", SkipUnless = nameof(IsQueryConfigured))]
+    [InlineData("SELECT CAST(1 AS int) AS completed; DECLARE @bad nvarchar(10) = N'bad'; SELECT CONVERT(int, @bad) AS failing;")]
+    [InlineData("SELECT CAST(1 AS int) AS completed; DECLARE @rows TABLE (n int, value nvarchar(10)); INSERT INTO @rows VALUES (1,N'2'),(2,N'3'),(3,N'bad'); SELECT CONVERT(int, value) AS failing FROM @rows ORDER BY n;")]
+    public async Task PartialQueryFailureReportsDeliveredStatistics(string sql)
+    {
+        var token = TestContext.Current.CancellationToken;
+        await using var client = await McpClient.CreateAsync(CreateTransport(RequiredEnvironmentVariable(ConfigVariable), "partial-query-integration"), cancellationToken: token);
+        var response = await client.CallToolAsync("execute_sql", new Dictionary<string, object?>
+        {
+            ["database"] = RequiredEnvironmentVariable(QueryDatabaseVariable),
+            ["sql"] = sql,
+        }, cancellationToken: token);
+        var body = Assert.NotNull(response.StructuredContent);
+        Assert.False(body.GetProperty("success").GetBoolean());
+        var sets = body.GetProperty("resultSets");
+        Assert.True(sets.GetArrayLength() > 0);
+        Assert.Equal(sets.EnumerateArray().Sum(x => x.GetProperty("rows").GetArrayLength()), body.GetProperty("returnedRows").GetInt32());
+        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(sets, Program.CreateToolJsonOptions()).Length, body.GetProperty("resultSizeBytes").GetInt32());
+        Assert.Contains("已返回部分结果", Assert.IsType<TextContentBlock>(Assert.Single(response.Content)).Text);
+    }
+
+    [Fact(Timeout = 60_000, Skip = "未配置正文标志测试。", SkipUnless = nameof(IsQueryConfigured))]
+    public async Task DescriptionFlagUsesSqlComparisonWithoutNormalization()
+    {
+        var settings = SettingsLoader.Load(RequiredEnvironmentVariable(ConfigVariable));
+        await using var connection = new SqlConnection(SqlConnectionFactory.BuildConnectionString(settings.Connection, RequiredEnvironmentVariable(QueryDatabaseVariable)));
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT CONVERT(bit, CASE WHEN v.desp <> N'' THEN 1 ELSE 0 END), v.desp FROM (VALUES (N''), (N'   '), (NCHAR(13)+NCHAR(10)+NCHAR(9)), (N'### Heading'+NCHAR(10)+N'body')) AS v(desp);";
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(typeof(bool), reader.GetFieldType(0));
+        var flags = new List<bool>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken)) flags.Add(reader.GetBoolean(0));
+        Assert.Equal(new[] { false, false, true, true }, flags);
+    }
+
     private const string ConfigVariable = "SQLSERVER_MCP_INTEGRATION_CONFIG";
     private const string ExecutableVariable = "SQLSERVER_MCP_INTEGRATION_EXE";
     private const string QueryDatabaseVariable = "SQLSERVER_MCP_INTEGRATION_QUERY_DATABASE";

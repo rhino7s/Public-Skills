@@ -8,6 +8,7 @@ sqlserver-readonly-mcp/artifacts/
 /.codex/
 
 # Local configuration and runtime output
+/TEMP/
 **/appsettings.local.json
 **/integration.local.json
 **/logs/

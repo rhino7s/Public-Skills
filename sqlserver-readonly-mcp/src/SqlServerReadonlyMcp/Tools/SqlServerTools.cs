@@ -47,7 +47,7 @@ public sealed class SqlServerTools
             result.Success
                 ? $"查询完成：返回 {result.ReturnedRows} 行，{result.ResultSets.Count} 个结果集" +
                   (result.Truncated ? $"；结果已截断（{result.TruncationReason}）。" : "。")
-                : $"查询失败：{result.Error?.Message}");
+                : (result.ResultSets.Count > 0 ? "本次查询未完成，已返回部分结果，不能据此判断整次任务完成。" : "查询失败：") + result.Error?.Message);
     }
 
     [McpServerTool(

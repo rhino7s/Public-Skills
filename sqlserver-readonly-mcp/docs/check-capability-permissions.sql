@@ -1,5 +1,6 @@
 /*
 管理员只读诊断。在配置库中执行；不通过普通 MCP 执行。
+前提：tools_role_group.active 已迁移，按三层 active 判定有效目录授权。
 只写本地临时表，不调用业务过程，不授予或撤销权限。
 需要枚举全部数据库/对象及模拟目标 LOGIN 的权限；建议独立管理员会话运行。
 @UserName = NULL 检查 tools_grant 中全部账号，否则仅检查指定完整 Login。
@@ -32,7 +33,7 @@ CREATE TABLE #cap_targets
 );
 INSERT #cap_targets
 SELECT g.u_name, i.iname,
-       CONVERT(bit, MAX(CASE WHEN g.active = 1 AND i.active = 1 THEN 1 ELSE 0 END))
+       CONVERT(bit, MAX(CASE WHEN g.active = 1 AND rg.active = 1 AND i.active = 1 THEN 1 ELSE 0 END))
 FROM dbo.tools_grant AS g
 JOIN #cap_users AS u ON u.u_name = g.u_name
 JOIN dbo.tools_role_group AS rg ON rg.rname = g.rname

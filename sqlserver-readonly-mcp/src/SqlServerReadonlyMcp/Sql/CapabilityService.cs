@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
@@ -75,46 +73,73 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
         try
         {
             var maximumBytes = checked(settings.Query.MaxResultSizeKb * 1024);
-            var builder = new StringBuilder();
+            var items = new List<CapabilityItem>();
             var ids = new HashSet<int>();
             (int Ord, int Id)? previous = null;
-            var count = 0;
             var hasMore = false;
-            // Reserve space for the page footer and the protocol envelope. Count JSON-escaped text,
-            // rather than assuming one UTF-16 character equals one byte.
-            var usedBytes = 512;
             await foreach (var row in store.ReadAsync(offset, settings.Capabilities.PageSize + 1, maximumBytes, cancellationToken).ConfigureAwait(false))
             {
-                if (!ids.Add(row.Id) || previous is { } p && (row.Ord < p.Ord || row.Ord == p.Ord && row.Id <= p.Id)
-                    || string.IsNullOrWhiteSpace(row.Description))
-                    throw new InvalidDataException("Invalid capability ordering, identity or description.");
+                if (row.Id <= 0 || !ids.Add(row.Id) || previous is { } p && (row.Ord < p.Ord || row.Ord == p.Ord && row.Id <= p.Id)
+                    || string.IsNullOrWhiteSpace(row.Summary))
+                    throw new InvalidDataException("Invalid capability ordering, identity or summary.");
                 previous = (row.Ord, row.Id);
-                if (count == settings.Capabilities.PageSize) { hasMore = true; break; }
-                var item = (count == 0 ? string.Empty : "\n\n---\n\n") + row.Description;
-                var itemBytes = JsonSerializer.SerializeToUtf8Bytes(item, Program.CreateToolJsonOptions()).Length;
-                if (row.Oversized || usedBytes + itemBytes > maximumBytes)
+                if (items.Count == settings.Capabilities.PageSize) { hasMore = true; break; }
+                items.Add(new(row.Id, row.ObjectName, row.Summary, row.HasDescription));
+                if (row.Oversized || Math.Max(ResponseBytes(Page(items, offset, true)), ResponseBytes(Page(items, offset, false))) > maximumBytes)
                 {
-                    if (count == 0) return Error("capability_too_large", "单条能力说明超过返回大小限制，请管理员缩短说明或调整限制。");
+                    items.RemoveAt(items.Count - 1);
+                    if (items.Count == 0) return TooLarge();
                     hasMore = true;
                     break;
                 }
-                builder.Append(item);
-                usedBytes += itemBytes;
-                count++;
             }
-            if (count == 0 && offset == 0 && RequiresCheck) return Denied();
-            var next = hasMore ? (offset + count).ToString(CultureInfo.InvariantCulture) : "null";
-            builder.Append(CultureInfo.InvariantCulture, $"\n\n---\n本页返回 {count} 条；has_more={hasMore.ToString().ToLowerInvariant()}；next_offset={next}。");
-            if (hasMore) builder.Append("请使用 next_offset 继续读取，当前目录尚未完整。");
-            return new() { Content = [new TextContentBlock { Text = builder.ToString() }] };
+            cancellationToken.ThrowIfCancellationRequested();
+            if (items.Count == 0 && offset == 0 && RequiresCheck) return Denied();
+            return Page(items, offset, hasMore);
         }
-        catch (Exception exception)
-        {
-            logger.LogWarning("Capability directory read failed: {Type}; SQL error {Number}.",
-                exception.GetType().Name, (exception as Microsoft.Data.SqlClient.SqlException)?.Number);
-            return FailureResult(exception, cancellationToken, checking: false);
-        }
+        catch (Exception exception) { return DirectoryFailure(exception, cancellationToken); }
     }
+
+    public async Task<CallToolResult> DetailsAsync(int id, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return Canceled();
+        if (id <= 0) return Error("invalid_input", "id 必须为正整数。");
+        if (!settings.Capabilities.Enabled) return Error("capabilities_disabled", "能力目录未启用。");
+        try
+        {
+            var maximumBytes = checked(settings.Query.MaxResultSizeKb * 1024);
+            var row = await store.ReadDetailsAsync(id, maximumBytes, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (row is null) return Denied();
+            if (row.Id != id || string.IsNullOrWhiteSpace(row.Summary) || row.Description is null
+                || row.HasDescription && row.Description.Length == 0)
+                throw new InvalidDataException("Invalid capability details.");
+            if (row.Oversized) return TooLarge();
+            var result = Success(new CapabilityDetailsResult(row.Id, row.ObjectName, row.Summary, row.HasDescription, row.Description),
+                row.HasDescription ? "能力详情已读取。" : "该条目无详情，以摘要为完整说明。");
+            return ResponseBytes(result) > maximumBytes ? TooLarge() : result;
+        }
+        catch (Exception exception) { return DirectoryFailure(exception, cancellationToken); }
+    }
+
+    private CallToolResult DirectoryFailure(Exception exception, CancellationToken token)
+    {
+        logger.LogWarning("Capability directory read failed: {Type}; SQL error {Number}.",
+            exception.GetType().Name, (exception as Microsoft.Data.SqlClient.SqlException)?.Number);
+        return FailureResult(exception, token, checking: false);
+    }
+
+    private static CallToolResult TooLarge() => Error("capability_too_large", "单条能力内容超过返回大小限制，请管理员缩短内容或调整限制。");
+    private static int ResponseBytes(CallToolResult result) => JsonSerializer.SerializeToUtf8Bytes(result, Program.CreateToolJsonOptions()).Length;
+    private static CallToolResult Page(IReadOnlyList<CapabilityItem> items, long offset, bool hasMore) =>
+        Success(new CapabilityPage(items, hasMore, hasMore ? offset + items.Count : null),
+            $"本页返回 {items.Count} 条能力摘要。" + (hasMore ? "请按 next_offset 继续读取。" : "摘要目录已读至末页。"));
+    private static CallToolResult Success<T>(T value, string text) => new()
+    {
+        IsError = false,
+        Content = [new TextContentBlock { Text = text }],
+        StructuredContent = JsonSerializer.SerializeToElement(value, Program.CreateToolJsonOptions()),
+    };
 
     private static CallToolResult Error(string code, string message) => new()
     {

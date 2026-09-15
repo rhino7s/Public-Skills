@@ -36,7 +36,7 @@ public sealed class ProcedureTools(SqlQueryService queryService)
                 ? $"过程执行完成：返回 {result.ReturnedRows} 行，{result.ResultSets.Count} 个结果集" +
                   (result.Truncated ? $"；结果已截断（{result.TruncationReason}）。" : "。")
                 : result.Error?.Category == "execution_unknown"
-                    ? $"过程执行结果未确认：{result.Error.Message}"
+                    ? $"过程执行结果未确认：{result.Error.Message}" + (result.ResultSets.Count > 0 ? "已返回部分结果，不能据此判断整次任务完成。" : "")
                     : $"过程执行失败：{result.Error?.Message}");
     }
 

@@ -75,11 +75,13 @@ public sealed class McpProtocolSmokeTests : IDisposable
         Assert.Equal(McpServerInstructions.Build(false), client.ServerInstructions);
         Assert.DoesNotContain("execute_procedure", client.ServerInstructions);
         Assert.DoesNotContain("list_capabilities", client.ServerInstructions);
+        Assert.DoesNotContain("get_capability_details", client.ServerInstructions);
         foreach (var tool in tools)
         {
             var published = JsonSerializer.Serialize(tool.ProtocolTool);
             Assert.DoesNotContain("execute_procedure", published);
             Assert.DoesNotContain("list_capabilities", published);
+            Assert.DoesNotContain("get_capability_details", published);
         }
         Assert.Equal(
             ["execute_sql", "find_object", "find_object_references", "get_object_details"],

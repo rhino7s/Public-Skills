@@ -1,9 +1,9 @@
 /*
-用户能力目录：首次建表脚本。
-先把下方两处数据库名替换为同一个实际独立配置库，在 SSMS/sqlcmd 中由管理员执行。
-不创建数据库、不修改已有表、不部署函数、不授予权限。
-任何同名表已存在时整批停止，不覆盖已有资料。
-详见 capabilities-plan.md。
+用户能力目录：首次建表脚本，目标为摘要/按需详情新版契约。
+在独立配置库中由管理员选中 SET NOCOUNT ON 起的建表段执行。
+前面的 SELECT/RETURN 是手工查看入口；不应整文件直接执行。
+不创建数据库、不迁移已有表、不部署函数、不授予权限。
+已有 tools_info 的环境应按 cb-practice-improvement-plan.md 分阶段迁移并人工补齐 summary，不能直接重跑 CREATE。
 */
 
 select * from dbo.tools_info
@@ -22,7 +22,8 @@ SET NOCOUNT ON;
         itype varchar(5) NOT NULL, -- skill / grant
         iname varchar(150) NOT NULL
             CONSTRAINT DF_tools_info_iname DEFAULT (''),
-        desp nvarchar(max) NOT NULL,
+        summary nvarchar(1000) NOT NULL,
+        desp nvarchar(max) NOT NULL, -- 没有则给空白值；has_desp 由函数根据原始正文计算
         remark nvarchar(max) NULL,
         upd_time datetime NOT NULL
             CONSTRAINT DF_tools_info_upd_time DEFAULT (GETDATE()),
@@ -47,6 +48,8 @@ SET NOCOUNT ON;
         remark nvarchar(max) NULL,
         upd_time datetime NOT NULL
             CONSTRAINT DF_tools_role_group_upd_time DEFAULT (GETDATE()),
+        active bit NOT NULL -- 单独控制该角色组内的能力关联
+            CONSTRAINT DF_tools_role_group_active DEFAULT (1),
         CONSTRAINT FK_tools_role_group_tools_info
             FOREIGN KEY (tool_id) REFERENCES dbo.tools_info(id)
     );
@@ -62,6 +65,8 @@ SET NOCOUNT ON;
             CONSTRAINT PK_tools_grant PRIMARY KEY,
         u_name nvarchar(128) NOT NULL,
         rname varchar(50) NOT NULL,
+        ord int NOT NULL -- 用户获授角色组的排序权重，优先于组内 ord
+            CONSTRAINT DF_tools_grant_ord DEFAULT (0),
         remark nvarchar(max) NULL,
         upd_time datetime NOT NULL
             CONSTRAINT DF_tools_grant_upd_time DEFAULT (GETDATE()),
@@ -72,5 +77,3 @@ SET NOCOUNT ON;
 
     CREATE INDEX IX_tools_grant_user_active_role
         ON dbo.tools_grant(u_name, active, rname);
-
-s

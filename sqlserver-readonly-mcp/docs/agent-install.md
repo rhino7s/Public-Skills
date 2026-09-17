@@ -58,7 +58,7 @@ if ($actualHash -ne $expectedHash) { throw 'Release ZIP 的 SHA-256 校验失败
   "password": "",
   "encrypt": true,
   "trustServerCertificate": true,
-  "connectTimeoutSeconds": 10,
+  "connectTimeoutSeconds": 5,
   "maxPoolSize": 2
 }
 ```
@@ -66,6 +66,8 @@ if ($actualHash -ne $expectedHash) { throw 'Release ZIP 的 SHA-256 校验失败
 将示例服务器和数据库替换为管理员指定值；若内部部署已预先填写，不要修改。默认模式必须在本机填写 `username` 和 `password`。只有管理员已确认 AD 映射及实际用户最终权限时，才能把 `authentication` 改为 `windowsIntegrated`，并将 `username` 和 `password` 保持为空字符串。
 
 省略 `authentication` 时一律按 `sqlPassword` 处理，以兼容旧版配置且避免意外使用当前 AD 权限。
+
+访问模式另由 `access.mode` 控制。SQL 密码未填时使用 development；AD 必须使用 catalog，需将示例中的 development 改为 catalog 或移除，并配置 `capabilities.listFunction` 和 `checkFunction`。AD 显式 development 或缺目录会拒绝启动。SQL 密码设为 catalog 时同样需要两个函数。升级后重启生效；迁移详见 [访问模式](access-modes.md)。
 
 ## 凭证、日志与权限
 

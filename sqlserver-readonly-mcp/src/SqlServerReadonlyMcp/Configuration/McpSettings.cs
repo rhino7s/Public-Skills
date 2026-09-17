@@ -9,6 +9,16 @@ public sealed class McpSettings
     public LoggingSettings Logging { get; init; } = new();
 
     public CapabilitySettings Capabilities { get; init; } = new();
+    public AccessSettings Access { get; init; } = new();
+    public bool IsCatalogMode => ConnectionAuthenticationModes.Resolve(Connection) == ConnectionAuthenticationModes.WindowsIntegrated
+        || Access.Mode == AccessSettings.Catalog;
+}
+
+public sealed class AccessSettings
+{
+    public const string Catalog = "catalog";
+    public const string Development = "development";
+    public string? Mode { get; init; }
 }
 
 public sealed class CapabilitySettings
@@ -33,7 +43,7 @@ public sealed class ConnectionSettings
 
     public bool TrustServerCertificate { get; init; }
 
-    public int ConnectTimeoutSeconds { get; init; } = 10;
+    public int ConnectTimeoutSeconds { get; init; } = 5;
 
     public int MaxPoolSize { get; init; } = 4;
 }

@@ -15,17 +15,19 @@ internal static class ProcedureTargetVerifier
             CONVERT(bit, CASE WHEN EXISTS (SELECT 1 FROM sys.system_objects x WHERE x.name = p.name) THEN 1 ELSE 0 END)
         FROM sys.procedures p
         JOIN sys.schemas s ON s.schema_id = p.schema_id
-        WHERE s.name = @schema AND p.name = @name;
+        WHERE s.name = @schema AND p.name = @name
+          AND (@requestedDatabase IS NULL OR (DB_ID(@requestedDatabase) = DB_ID() AND p.type = 'P'));
         """;
 
     internal static async Task<ProcedureVerification> VerifyAsync(SqlConnection connection, ProcedureCallTarget target,
-        int timeoutSeconds, CancellationToken token)
+        int timeoutSeconds, CancellationToken token, string? requestedDatabase = null)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = VerificationSql;
         command.CommandTimeout = timeoutSeconds;
         command.Parameters.Add("@schema", SqlDbType.NVarChar, 128).Value = target.Schema;
         command.Parameters.Add("@name", SqlDbType.NVarChar, 128).Value = target.Name;
+        command.Parameters.Add("@requestedDatabase", SqlDbType.NVarChar, 128).Value = (object?)requestedDatabase ?? DBNull.Value;
         await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
         if (!await reader.ReadAsync(token).ConfigureAwait(false))
             return new(null, null, new ToolError("procedure_not_available", "目标不是当前数据库中可见的业务 procedure；未执行。"));

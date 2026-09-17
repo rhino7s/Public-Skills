@@ -4,6 +4,41 @@ namespace SqlServerReadonlyMcp.Tests;
 
 public sealed class SettingsValidatorTests
 {
+    [Theory]
+    [InlineData("windowsIntegrated", null, true, true)]
+    [InlineData("windowsIntegrated", "", true, true)]
+    [InlineData("windowsIntegrated", " \t\r\n", true, true)]
+    [InlineData("windowsIntegrated", "\u3000", true, true)]
+    [InlineData("windowsIntegrated", "", false, false)]
+    [InlineData("sqlPassword", "", false, true)]
+    [InlineData("sqlPassword", " \t\r\n", false, true)]
+    [InlineData("sqlPassword", "\u3000", false, true)]
+    [InlineData("windowsIntegrated", "catalog", true, true)]
+    [InlineData("windowsIntegrated", "development", true, false)]
+    [InlineData("windowsIntegrated", null, false, false)]
+    [InlineData("sqlPassword", null, false, true)]
+    [InlineData("sqlPassword", "development", false, true)]
+    [InlineData("sqlPassword", "catalog", true, true)]
+    [InlineData("sqlPassword", "catalog", false, false)]
+    [InlineData("sqlPassword", "CATALOG", true, false)]
+    public void AccessModeMatrix(string authentication, string? mode, bool catalog, bool valid)
+    {
+        var settings = new McpSettings
+        {
+            Connection = new() { Authentication = authentication, Server = "test.invalid",
+                Username = authentication == "sqlPassword" ? "test" : "",
+                Password = authentication == "sqlPassword" ? "test-only" : "" },
+            Access = new() { Mode = mode },
+            Capabilities = new() { ListFunction = catalog ? "D.dbo.list" : "", CheckFunction = catalog ? "D.dbo.check" : "" },
+        };
+        if (valid)
+        {
+            SettingsValidator.Validate(settings);
+            Assert.Equal(authentication == "windowsIntegrated" || mode == "catalog", settings.IsCatalogMode);
+        }
+        else Assert.Throws<SettingsException>(() => SettingsValidator.Validate(settings));
+    }
+
     [Fact]
     public void AcceptsLegacyCredentialsWithoutAuthenticationMode()
     {
@@ -24,6 +59,7 @@ public sealed class SettingsValidatorTests
                 Username = string.Empty,
                 Password = string.Empty,
             },
+            Capabilities = new() { ListFunction = "D.dbo.list", CheckFunction = "D.dbo.check" },
         };
 
         SettingsValidator.Validate(settings);

@@ -25,7 +25,7 @@ public sealed class AuditLogger
                 sqlTruncated = true;
             }
 
-            _writer.Write(new Dictionary<string, object?>
+            WriteRecord(new Dictionary<string, object?>
             {
                 ["level"] = auditEvent.Status == "success" ? "Information" : "Warning",
                 ["eventType"] = "query",
@@ -57,7 +57,7 @@ public sealed class AuditLogger
     {
         try
         {
-            _writer.Write(new Dictionary<string, object?>
+            WriteRecord(new Dictionary<string, object?>
             {
                 ["level"] = auditEvent.Status == "success" ? "Information" : "Warning",
                 ["eventType"] = "tool",
@@ -74,6 +74,21 @@ public sealed class AuditLogger
         {
             // Audit failure must not alter tool behavior or write to stdout.
         }
+    }
+
+    private void WriteRecord(Dictionary<string, object?> record)
+    {
+        if (CallTiming.Current is { } timing)
+        {
+            foreach (var pair in timing.Snapshot()) record[pair.Key] = pair.Value;
+            timing.Audited = true;
+        }
+        else
+        {
+            foreach (var phase in new[] { "parse_ms", "authorization_ms", "metadata_ms", "execution_ms" }) record[phase] = null;
+            record["total_ms"] = record.GetValueOrDefault("durationMs");
+        }
+        _writer.Write(record);
     }
 
     private static string? EmptyAsNull(string? value) =>

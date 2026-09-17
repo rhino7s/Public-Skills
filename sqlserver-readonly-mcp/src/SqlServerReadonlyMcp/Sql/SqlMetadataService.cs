@@ -154,7 +154,7 @@ public sealed class SqlMetadataService
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return FinishSearch(requestId, database, stopwatch, objects, false,
-                new ToolError("canceled", "对象搜索已由调用方取消。"));
+                CancellationError());
         }
         catch (SqlException exception)
         {
@@ -382,7 +382,7 @@ public sealed class SqlMetadataService
                 null,
                 jobs,
                 false,
-                new ToolError("canceled", "文本搜索已由调用方取消。"));
+                CancellationError());
         }
         catch (SqlException exception)
         {
@@ -663,7 +663,7 @@ public sealed class SqlMetadataService
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return FinishDefinition(requestId, database, stopwatch, actualStartLine,
-                new ToolError("canceled", "定义读取已由调用方取消。"));
+                CancellationError());
         }
         catch (SqlException exception)
         {
@@ -1412,7 +1412,11 @@ public sealed class SqlMetadataService
 
     private static string Limit(string value) => value.Length <= 2_048 ? value : value[..2_048];
 
-    private static string NewRequestId() => Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+    private static ToolError CancellationError() => CallTiming.Current is { CallerToken.IsCancellationRequested: false }
+        ? new("timeout", "操作超时，本次调用已停止，请稍后再试。")
+        : new("canceled", "调用已由调用方取消。");
+
+    private static string NewRequestId() => CallTiming.Current?.RequestId ?? Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
 
     private sealed record DefinitionDetails(
         string? Definition,

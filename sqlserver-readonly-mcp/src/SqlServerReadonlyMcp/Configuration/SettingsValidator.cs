@@ -11,6 +11,14 @@ public static class SettingsValidator
         var errors = new List<string>();
         Required(settings.Connection.Server, "connection.server", errors);
         ValidateAuthentication(settings.Connection, errors);
+        if (settings.Access is null) errors.Add("access 必须是配置对象。");
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(settings.Access.Mode) && settings.Access.Mode is not (AccessSettings.Catalog or AccessSettings.Development))
+                errors.Add("access.mode 只允许 catalog 或 development。");
+            if (settings.Access.Mode == AccessSettings.Development && ConnectionAuthenticationModes.Resolve(settings.Connection) == ConnectionAuthenticationModes.WindowsIntegrated)
+                errors.Add("Windows 集成认证只支持 catalog 模式；请移除 access.mode 或设为 catalog。");
+        }
         ValidateCapabilities(settings, errors);
         Range(settings.Connection.ConnectTimeoutSeconds, 1, 30, "connection.connectTimeoutSeconds", errors);
         Range(settings.Connection.MaxPoolSize, 1, 8, "connection.maxPoolSize", errors);
@@ -57,9 +65,11 @@ public static class SettingsValidator
         }
         if (!capabilities.Enabled && !string.IsNullOrWhiteSpace(capabilities.CheckFunction))
             errors.Add("capabilities.checkFunction 不得单独配置。");
-        if (capabilities.Enabled && ConnectionAuthenticationModes.Resolve(settings.Connection) == ConnectionAuthenticationModes.WindowsIntegrated
-            && string.IsNullOrWhiteSpace(capabilities.CheckFunction))
-            errors.Add("Windows 集成认证启用目录时必须配置 capabilities.checkFunction。");
+        if (settings.Access is not null && settings.IsCatalogMode)
+        {
+            if (!capabilities.Enabled) errors.Add("catalog 模式必须配置 capabilities.listFunction。");
+            if (string.IsNullOrWhiteSpace(capabilities.CheckFunction)) errors.Add("catalog 模式必须配置 capabilities.checkFunction。");
+        }
     }
 
     private static void ValidateAuthentication(ConnectionSettings settings, ICollection<string> errors)

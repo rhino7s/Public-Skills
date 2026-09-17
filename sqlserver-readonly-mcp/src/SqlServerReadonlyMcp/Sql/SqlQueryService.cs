@@ -19,6 +19,9 @@ public sealed class SqlQueryService
         "存储过程结果达到 MCP 返回限制，当前内容不代表完整数据。procedure 已执行完成，但返回内容不完整；不得仅为获取剩余结果而重复执行该业务动作。";
 
     private readonly QuerySettings _settings;
+    private readonly bool _catalogMode;
+    private readonly CatalogSqlAnalyzer _catalogAnalyzer;
+    private readonly CatalogAccessService _catalogAccess;
     private readonly CapabilityService _capabilities;
     private readonly SqlConnectionFactory _connectionFactory;
     private readonly QueryConcurrencyGate _concurrencyGate;
@@ -31,9 +34,14 @@ public sealed class SqlQueryService
         QueryConcurrencyGate concurrencyGate,
         SqlSafetyAnalyzer safetyAnalyzer,
         AuditLogger auditLogger,
-        CapabilityService capabilities)
+        CapabilityService capabilities,
+        CatalogSqlAnalyzer? catalogAnalyzer = null,
+        CatalogAccessService? catalogAccess = null)
     {
         _settings = settings.Query;
+        _catalogMode = settings.IsCatalogMode;
+        _catalogAnalyzer = catalogAnalyzer ?? new CatalogSqlAnalyzer();
+        _catalogAccess = catalogAccess ?? new CatalogAccessService(settings, connectionFactory, concurrencyGate);
         _capabilities = capabilities;
         _connectionFactory = connectionFactory;
         _concurrencyGate = concurrencyGate;
@@ -49,7 +57,6 @@ public sealed class SqlQueryService
             sql,
             database,
             "execute_sql",
-            _safetyAnalyzer.Analyze(sql),
             LimitGuidance,
             cancellationToken).ConfigureAwait(false);
 
@@ -61,7 +68,6 @@ public sealed class SqlQueryService
             sql,
             database,
             "execute_procedure",
-            _safetyAnalyzer.AnalyzeProcedureCall(sql, database),
             ProcedureLimitGuidance,
             cancellationToken).ConfigureAwait(false);
 
@@ -69,11 +75,12 @@ public sealed class SqlQueryService
         string sql,
         string database,
         string tool,
-        SqlSafetyResult safety,
         string limitGuidance,
         CancellationToken cancellationToken)
     {
-        var requestId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        using var ownedTiming = CallTiming.Current is null ? new CallTiming(cancellationToken) : null;
+        var timing = CallTiming.Current!;
+        var requestId = timing.RequestId;
         var totalStopwatch = Stopwatch.StartNew();
         var queueWaitMilliseconds = 0L;
         var resultSets = new List<ResultSetResult>();
@@ -83,63 +90,65 @@ public sealed class SqlQueryService
         string? truncationReason = null;
         var procedureStarted = false;
 
-        if (string.IsNullOrWhiteSpace(database))
-        {
-            totalStopwatch.Stop();
-            var rejected = Failure(
-                requestId,
-                resultSets,
-                returnedRows,
-                resultSizeBytes,
-                queueWaitMilliseconds,
-                totalStopwatch.ElapsedMilliseconds,
-                new ToolError("invalid_input", "database 不可为空。"));
-            WriteAudit(rejected, tool, database, sql, "invalid_input");
-            return rejected;
-        }
-
-        if (!safety.IsAllowed)
-        {
-            totalStopwatch.Stop();
-            var rejected = Failure(
-                requestId,
-                resultSets,
-                returnedRows,
-                resultSizeBytes,
-                queueWaitMilliseconds,
-                totalStopwatch.ElapsedMilliseconds,
-                new ToolError("safety_rejection", safety.Message ?? "SQL 被安全规则拒绝。"));
-            WriteAudit(rejected, tool, database, sql, safety.Code);
-            return rejected;
-        }
-
-        if (tool == "execute_procedure")
-        {
-            _safetyAnalyzer.AnalyzeProcedureCall(sql, database, out var target);
-            var denial = await _capabilities.CheckProcedureAccessAsync(database.Trim(), target!.Schema, target.Name, cancellationToken).ConfigureAwait(false);
-            if (denial is not null)
-            {
-                totalStopwatch.Stop();
-                var rejected = Failure(requestId, resultSets, returnedRows, resultSizeBytes, queueWaitMilliseconds,
-                    totalStopwatch.ElapsedMilliseconds, denial);
-                WriteAudit(rejected, tool, database, sql, denial.Category);
-                return rejected;
-            }
-        }
-
         try
         {
-            using var lease = await _concurrencyGate.EnterAsync(cancellationToken).ConfigureAwait(false);
+            if (ownedTiming is not null && _capabilities.RequiresCheck)
+            {
+                using var auth = timing.Measure("authorization");
+                var rejection = await _capabilities.CheckAccessAsync(timing.Preflight.Token).ConfigureAwait(false);
+                if (rejection is not null)
+                    {
+                    var error = (timing.Preflight.IsCancellationRequested && !cancellationToken.IsCancellationRequested
+                        ? CapabilityService.CheckTimedOut() : rejection).StructuredContent!.Value;
+                    return Reject(new(error.GetProperty("code").GetString()!, error.GetProperty("message").GetString()!));
+                }
+            }
+            if (string.IsNullOrWhiteSpace(database)) return Reject(new("invalid_input", "database 不可为空。"));
+            SqlSafetyResult safety;
+            CatalogAnalysis? analysis = null;
+            ProcedureCallTarget? target = null;
+            using (timing.Measure("parse"))
+            {
+                if (_catalogMode && sql.Length > CatalogSqlAnalyzer.MaximumSqlCharacters)
+                    return Reject(new("safety_rejection", "SQL 超过长度限制，请缩小批次。"));
+                safety = tool == "execute_procedure"
+                    ? _safetyAnalyzer.AnalyzeProcedureCall(sql, database, out target) : _safetyAnalyzer.Analyze(sql);
+                if (safety.IsAllowed && _catalogMode)
+                {
+                    analysis = _catalogAnalyzer.Analyze(sql, tool == "execute_procedure", timing.Preflight.Token);
+                    safety = analysis.Safety;
+                }
+            }
+            if (!safety.IsAllowed) return Reject(new("safety_rejection", safety.Message ?? "SQL 被安全规则拒绝。"));
+            if (_catalogMode) timing.Preflight.Token.ThrowIfCancellationRequested();
+            if (tool == "execute_procedure")
+            {
+                using var auth = timing.Measure("authorization");
+                var denial = await _capabilities.CheckProcedureAccessAsync(database.Trim(), target!.Schema, target.Name, timing.Preflight.Token).ConfigureAwait(false);
+                if (timing.Preflight.IsCancellationRequested) timing.Preflight.Token.ThrowIfCancellationRequested();
+                if (denial is not null) return Reject(denial);
+            }
+            else if (_catalogMode)
+            {
+                var denial = await _catalogAccess.VerifyAsync(analysis!.Objects, timing.Preflight.Token).ConfigureAwait(false);
+                if (denial is not null) return Reject(denial);
+            }
+
+            using var executionDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (tool != "execute_procedure") executionDeadline.CancelAfter(TimeSpan.FromSeconds(_settings.TimeoutSeconds));
+            using var initialPhase = timing.Measure(tool == "execute_procedure" ? "metadata" : "execution");
+            var preparationToken = tool == "execute_procedure" ? timing.Preflight.Token : executionDeadline.Token;
+            using var lease = await _concurrencyGate.EnterAsync(preparationToken).ConfigureAwait(false);
             queueWaitMilliseconds = lease.WaitMilliseconds;
 
             await using var connection = await _connectionFactory
-                .OpenAsync(database.Trim(), cancellationToken)
+                .OpenAsync(database.Trim(), preparationToken)
                 .ConfigureAwait(false);
             await using var command = connection.CreateCommand();
             if (tool == "execute_procedure")
             {
-                _safetyAnalyzer.AnalyzeProcedureCall(sql, database, out var target);
-                var verification = await ProcedureTargetVerifier.VerifyAsync(connection, target!, _settings.TimeoutSeconds, cancellationToken).ConfigureAwait(false);
+                var verification = await ProcedureTargetVerifier.VerifyAsync(connection, target!, CallTiming.PreflightSeconds, preparationToken,
+                    analysis?.Objects.Single().Database).ConfigureAwait(false);
                 if (verification.Error is { } error)
                 {
                     totalStopwatch.Stop();
@@ -154,8 +163,12 @@ public sealed class SqlQueryService
             command.CommandType = CommandType.Text;
             command.CommandTimeout = _settings.TimeoutSeconds;
 
-            using var executionDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            if (tool == "execute_procedure") executionDeadline.CancelAfter(TimeSpan.FromSeconds(_settings.TimeoutSeconds));
+            if (tool == "execute_procedure")
+            {
+                initialPhase.Dispose();
+                executionDeadline.CancelAfter(TimeSpan.FromSeconds(_settings.TimeoutSeconds));
+            }
+            using var executionPhase = tool == "execute_procedure" ? timing.Measure("execution") : null;
             var executionToken = executionDeadline.Token;
             procedureStarted = tool == "execute_procedure";
             await using var reader = await command
@@ -306,6 +319,10 @@ public sealed class SqlQueryService
             WriteAudit(canceled, tool, database, sql, "canceled");
             return canceled;
         }
+        catch (OperationCanceledException)
+        {
+            return Reject(new("timeout", "操作超时，本次调用已停止，请稍后再试。"));
+        }
         catch (SqlException exception)
         {
             totalStopwatch.Stop();
@@ -335,6 +352,15 @@ public sealed class SqlQueryService
             WriteAudit(failed, tool, database, sql, "internal_error");
             return failed;
         }
+        QueryResult Reject(ToolError error)
+        {
+            totalStopwatch.Stop();
+            var result = Failure(requestId, resultSets, returnedRows, resultSizeBytes, queueWaitMilliseconds,
+                totalStopwatch.ElapsedMilliseconds, error);
+            WriteAudit(result, tool, database, sql, error.Category);
+            return result;
+        }
+
     }
 
     // Consume all remaining result sets without retaining values, so late SQL errors are observed.

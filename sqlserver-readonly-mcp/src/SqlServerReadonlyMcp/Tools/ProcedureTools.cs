@@ -17,14 +17,14 @@ public sealed class ProcedureTools(SqlQueryService queryService)
         OpenWorld = false,
         UseStructuredContent = true,
         OutputSchemaType = typeof(QueryResult))]
-    [Description(
-        "仅允许执行当前身份能力目录明确授权的业务 procedure，且必须由用户明确要求对应业务动作。" +
-        "执行前通过 find_object 或 get_object_details 确认 canExecute=true；参数不明确时先用 get_object_details 读取。" +
-        "execution_unknown 表示未确认执行完成，不得自动重试；不得为补取截断结果而重复执行。")]
+    [Description("""
+        执行“能力目录”中已授权且用户要求的业务 procedure。
+        execution_unknown 表示执行完成状态未确认，不得自动重试；不得为补取截断结果而重复执行。
+        """)]
     public async Task<CallToolResult> ExecuteProcedureAsync(
-        [Description("单条静态 EXEC 调用，例如 EXEC dbo.ExampleProcedure 'a', 1；省略 schema 时使用 dbo。不接受动态 SQL、变量过程名或远程调用。")]
+        [Description("单条静态 EXEC 调用，含业务参数；可省略数据库和 schema，省略 schema 使用 dbo。不支持动态 SQL、变量过程名及远程调用。")]
         string sql,
-        [Description("明确的初始数据库；SQL 使用三段名时，其中的数据库必须与此参数一致。")]
+        [Description("procedure 所在数据库；须与 SQL 中显式指定的数据库一致。")]
         string database,
         CancellationToken cancellationToken = default)
     {

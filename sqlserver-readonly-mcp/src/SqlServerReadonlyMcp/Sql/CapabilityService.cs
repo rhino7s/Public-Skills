@@ -2,18 +2,19 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using SqlServerReadonlyMcp.Configuration;
+using SqlServerReadonlyMcp.Logging;
 
 namespace SqlServerReadonlyMcp.Sql;
 
 public sealed class CapabilityService(McpSettings settings, ICapabilityStore store, ILogger<CapabilityService> logger)
 {
-    public bool RequiresCheck => settings.Capabilities.Enabled &&
-        ConnectionAuthenticationModes.Resolve(settings.Connection) == ConnectionAuthenticationModes.WindowsIntegrated;
+    public bool RequiresCheck => settings.IsCatalogMode;
 
     public async Task<CallToolResult?> CheckAccessAsync(CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested) return Canceled();
         if (!RequiresCheck) return null;
+        if (!settings.Capabilities.Enabled) return Unavailable();
         try
         {
             var allowed = await store.CheckAsync(cancellationToken).ConfigureAwait(false);
@@ -50,16 +51,18 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
     }
 
     public static CallToolResult Unavailable() => Error("access_check_unavailable", "访问检查暂不可用，本次操作未执行；可稍后重试，不得绕过检查。");
+    public static CallToolResult CheckTimedOut() => Error("access_check_unavailable", "访问检查超时，本次操作未执行；请稍后再试。");
     private static CallToolResult Canceled() => Error("canceled", "调用已取消。");
     private static CallToolResult FailureResult(Exception exception, CancellationToken token, bool checking)
     {
-        if (token.IsCancellationRequested) return Canceled();
+        if (token.IsCancellationRequested) return CallTiming.Current is { CallerToken.IsCancellationRequested: false }
+            ? Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "操作超时，本次调用已停止，请稍后再试。") : Canceled();
         if (exception is UnauthorizedAccessException || exception is Microsoft.Data.SqlClient.SqlException sql
             && SqlErrorClassifier.Categorize(sql.Number) == "permission_denied") return Denied();
         if (exception is InvalidDataException or ArgumentException || exception is Microsoft.Data.SqlClient.SqlException missing
             && missing.Number is 195 or 201 or 207 or 208 or 4121)
             return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "能力配置不可用，请联系管理员处理。");
-        return checking ? Unavailable() : Error("capabilities_unavailable", "能力目录暂不可用，请稍后重试；本次不得继续业务操作。");
+        return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "当前暂时无法访问，请确认网络连接后再试。");
     }
 
     public static CallToolResult Denied() => Error("access_denied", "用户没有访问权限");

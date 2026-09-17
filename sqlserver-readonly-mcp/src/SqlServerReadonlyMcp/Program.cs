@@ -41,6 +41,8 @@ public static class Program
             builder.Services.AddSingleton(logWriter);
             builder.Services.AddSingleton<AuditLogger>();
             builder.Services.AddSingleton<SqlSafetyAnalyzer>();
+            builder.Services.AddSingleton<CatalogSqlAnalyzer>();
+            builder.Services.AddSingleton<CatalogAccessService>();
             builder.Services.AddSingleton<SqlConnectionFactory>();
             builder.Services.AddSingleton<QueryConcurrencyGate>();
             builder.Services.AddSingleton<SqlQueryService>();
@@ -49,20 +51,49 @@ public static class Program
             builder.Services.AddSingleton<CapabilityService>();
             var toolJsonOptions = CreateToolJsonOptions();
             var mcp = builder.Services
-                .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Build(settings.Capabilities.Enabled))
+                .AddMcpServer(options => options.ServerInstructions = McpServerInstructions.Build(settings.Capabilities.Enabled, settings.IsCatalogMode))
                 .WithStdioServerTransport()
-                .WithTools<SqlServerTools>(serializerOptions: toolJsonOptions)
                 .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, cancellationToken) =>
                 {
-                    var capabilities = context.Services?.GetService<CapabilityService>();
-                    if (capabilities is null) return CapabilityService.Unavailable();
-                    var rejection = await capabilities.CheckAccessAsync(cancellationToken).ConfigureAwait(false);
-                    if (rejection is not null) return rejection;
-                    return await next(context, cancellationToken).ConfigureAwait(false);
+                    using var timing = new CallTiming(cancellationToken);
+                    ModelContextProtocol.Protocol.CallToolResult? response = null;
+                    try
+                    {
+                        var capabilities = context.Services?.GetService<CapabilityService>();
+                        if (capabilities is null) return response = CapabilityService.Unavailable();
+                        if (capabilities.RequiresCheck)
+                        {
+                            using var phase = timing.Measure("authorization");
+                            var rejection = await capabilities.CheckAccessAsync(timing.Preflight.Token).ConfigureAwait(false);
+                            if (timing.Preflight.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+                                return response = CapabilityService.CheckTimedOut();
+                            if (rejection is not null) return response = rejection;
+                        }
+                        if (context.Params?.Name is "execute_sql" or "execute_procedure")
+                            return response = await next(context, cancellationToken).ConfigureAwait(false);
+                        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        deadline.CancelAfter(TimeSpan.FromSeconds(settings.Query.TimeoutSeconds));
+                        using var execution = timing.Measure("execution");
+                        return response = await next(context, deadline.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        if (!timing.Audited)
+                            context.Services?.GetService<AuditLogger>()?.WriteTool(new ToolAuditEvent(timing.RequestId,
+                                context.Params?.Name ?? "unknown", null, Convert.ToInt64(timing.Snapshot()["total_ms"]),
+                                response is { IsError: false } ? "success" : "error",
+                                ErrorCategory: response?.StructuredContent is { } body && body.TryGetProperty("code", out var code)
+                                    ? code.GetString() : response is { IsError: false } ? null : "tool_error"));
+                    }
                 }));
+            if (settings.IsCatalogMode) mcp.WithTools<CatalogQueryTools>(serializerOptions: toolJsonOptions);
+            else mcp.WithTools<SqlServerTools>(serializerOptions: toolJsonOptions);
             if (settings.Capabilities.Enabled)
-                mcp.WithTools<CapabilityTools>(serializerOptions: toolJsonOptions)
-                    .WithTools<ProcedureTools>(serializerOptions: toolJsonOptions);
+            {
+                mcp.WithTools<CapabilityTools>(serializerOptions: toolJsonOptions);
+                if (settings.IsCatalogMode) mcp.WithTools<CatalogProcedureTools>(serializerOptions: toolJsonOptions);
+                else mcp.WithTools<ProcedureTools>(serializerOptions: toolJsonOptions);
+            }
 
             await builder.Build().RunAsync().ConfigureAwait(false);
             return 0;

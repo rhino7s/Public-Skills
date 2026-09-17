@@ -54,7 +54,7 @@ public sealed class SqlServerIntegrationTests
         await using var client = await McpClient.CreateAsync(CreateTransport(RequiredEnvironmentVariable(ConfigVariable), "cap-summary-integration"), cancellationToken: token);
         var tools = await client.ListToolsAsync(cancellationToken: token);
         if (!tools.Any(t => t.Name == "list_capabilities")) return;
-        Assert.Equal(7, tools.Count);
+        Assert.Equal(SettingsLoader.Load(RequiredEnvironmentVariable(ConfigVariable)).IsCatalogMode ? 4 : 7, tools.Count);
         var page = await client.CallToolAsync("list_capabilities", new Dictionary<string, object?>(), cancellationToken: token);
         Assert.False(page.IsError);
         var content = Assert.NotNull(page.StructuredContent);

@@ -57,8 +57,8 @@ public sealed class CapabilityTests
 
     [Theory]
     [InlineData(false, true)]
-    [InlineData(true, false)]
-    public async Task SqlOrDisabledCatalogSkipsCheck(bool ad, bool enabled)
+    [InlineData(false, false)]
+    public async Task SqlDevelopmentSkipsCheck(bool ad, bool enabled)
     {
         var store = new FakeStore { CheckFailure = new UnauthorizedAccessException() };
         var service = Service(Settings(ad: ad, enabled: enabled), store);

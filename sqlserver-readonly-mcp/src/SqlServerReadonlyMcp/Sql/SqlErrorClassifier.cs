@@ -6,7 +6,7 @@ internal static class SqlErrorClassifier
 {
     internal static ToolError Create(SqlException exception) => new(
         Categorize(exception.Number),
-        Limit(exception.Message),
+        (exception.Data.Contains("mcp.connectionFailure") || Categorize(exception.Number) == "connection_error") ? "当前暂时无法访问，请确认网络连接后再试。" : Limit(exception.Message),
         exception.Number,
         exception.State,
         exception.Class);

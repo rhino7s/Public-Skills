@@ -44,10 +44,10 @@ public sealed class McpProtocolSmokeTests : IDisposable
         {
             connection = new
             {
-                authentication = ConnectionAuthenticationModes.WindowsIntegrated,
+                authentication = ConnectionAuthenticationModes.SqlPassword,
                 server = "invalid.example.local",
-                username = string.Empty,
-                password = string.Empty,
+                username = "test",
+                password = "test-only",
             },
             logging = new
             {
@@ -87,16 +87,16 @@ public sealed class McpProtocolSmokeTests : IDisposable
             ["execute_sql", "find_object", "find_object_references", "get_object_details"],
             tools.Select(tool => tool.Name).Order(StringComparer.Ordinal).ToArray());
         var queryTool = Assert.Single(tools, tool => tool.Name == "execute_sql");
-        Assert.Contains("每次调用独立执行", queryTool.ProtocolTool.Description);
+        Assert.Contains("每次调用使用独立会话", queryTool.ProtocolTool.Description);
         Assert.DoesNotContain(tools, tool => tool.Name == "execute_procedure");
 
         var executeSqlTool = Assert.Single(tools, tool => tool.Name == "execute_sql");
-        Assert.Contains("禁止 EXEC", executeSqlTool.ProtocolTool.Description);
+        Assert.Contains("不支持 EXEC", executeSqlTool.ProtocolTool.Description);
         Assert.Contains("远程数据源", executeSqlTool.ProtocolTool.Description);
 
         var detailsTool = Assert.Single(tools, tool => tool.Name == "get_object_details");
-        Assert.Contains("先用 definitionSearch", detailsTool.ProtocolTool.Description);
-        Assert.Contains("startLine/maxLines", detailsTool.ProtocolTool.Description);
+        Assert.Contains("指定 definitionSearch", detailsTool.ProtocolTool.Description);
+        Assert.Contains("startLine/maxLines", detailsTool.ProtocolTool.InputSchema.GetProperty("properties").GetProperty("definitionSearch").GetProperty("description").GetString());
         var detailsSchema = Assert.NotNull(detailsTool.ProtocolTool.OutputSchema);
         var detailsProperties = detailsSchema.GetProperty("properties");
         Assert.True(detailsProperties.TryGetProperty("canExecute", out _));
@@ -132,9 +132,9 @@ public sealed class McpProtocolSmokeTests : IDisposable
 
         var referenceTool = Assert.Single(tools, tool => tool.Name == "find_object_references");
         Assert.Equal("查找 SQL Server 对象文本引用候选", referenceTool.ProtocolTool.Title);
-        Assert.Contains("不得直接称为实际调用方", referenceTool.ProtocolTool.Description);
-        Assert.Contains("必须查看 matches 并按需读取候选定义", referenceTool.ProtocolTool.Description);
-        Assert.Contains("zold", referenceTool.ProtocolTool.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("文本引用候选", referenceTool.ProtocolTool.Description);
+        Assert.Contains("不是完整依赖关系", referenceTool.ProtocolTool.Description);
+        Assert.DoesNotContain("zold", referenceTool.ProtocolTool.Description, StringComparison.OrdinalIgnoreCase);
         var referenceSchema = Assert.NotNull(referenceTool.ProtocolTool.OutputSchema);
         var referenceProperties = referenceSchema.GetProperty("properties");
         Assert.True(referenceProperties.TryGetProperty("referencesTruncationReason", out _));
@@ -148,19 +148,19 @@ public sealed class McpProtocolSmokeTests : IDisposable
         Assert.Contains("targetObject", requiredReferenceArguments);
         Assert.Contains("searchDatabase", requiredReferenceArguments);
         Assert.Contains(
-            "可与 searchDatabase 不同",
+            "目标对象所在数据库",
             referenceInputs.GetProperty("targetDatabase").GetProperty("description").GetString());
         Assert.Contains(
             "目标名至少 4 字符时也匹配裸对象名",
             referenceInputs.GetProperty("searchDatabase").GetProperty("description").GetString());
         Assert.Contains(
-            "不同时只匹配明确的 database.schema.object 三段名",
+            "跨库只匹配 database.schema.object",
             referenceInputs.GetProperty("searchDatabase").GetProperty("description").GetString());
         Assert.Contains(
             "不受 offset/limit 控制",
             referenceInputs.GetProperty("includeJobs").GetProperty("description").GetString());
         Assert.Contains(
-            "referencesTruncationReason=max_offset",
+            "续页位置为 nextOffset",
             referenceInputs.GetProperty("offset").GetProperty("description").GetString());
         Assert.False(referenceInputs.GetProperty("includeJobs").GetProperty("default").GetBoolean());
         Assert.Equal(50, referenceInputs.GetProperty("limit").GetProperty("default").GetInt32());

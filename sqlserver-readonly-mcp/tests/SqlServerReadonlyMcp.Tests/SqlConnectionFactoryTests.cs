@@ -21,6 +21,8 @@ public sealed class SqlConnectionFactoryTests
         var builder = new SqlConnectionStringBuilder(connectionString);
 
         Assert.True(builder.IntegratedSecurity);
+        Assert.Equal(0, builder.ConnectRetryCount);
+        Assert.Equal(5, builder.ConnectTimeout);
         Assert.Equal("ExampleDatabase", builder.InitialCatalog);
         Assert.Empty(builder.UserID);
         Assert.Empty(builder.Password);
@@ -94,7 +96,8 @@ public sealed class SqlConnectionFactoryTests
         {
             File.WriteAllText(path, """
                 { "connection": { "server": "test.invalid", "authentication": "windowsIntegrated",
-                  "defaultDatabase": "MustNotBeUsed" } }
+                  "defaultDatabase": "MustNotBeUsed" },
+                  "capabilities": { "listFunction": "D.dbo.list", "checkFunction": "D.dbo.check" } }
                 """);
             var settings = SettingsLoader.Load(path);
             var connection = new SqlConnectionStringBuilder(SqlConnectionFactory.BuildConnectionString(settings.Connection, "RequestedCatalog"));

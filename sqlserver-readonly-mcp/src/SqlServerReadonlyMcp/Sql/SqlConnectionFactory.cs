@@ -20,6 +20,12 @@ public sealed class SqlConnectionFactory
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             return connection;
         }
+        catch (SqlException exception)
+        {
+            exception.Data["mcp.connectionFailure"] = true;
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
         catch
         {
             await connection.DisposeAsync().ConfigureAwait(false);
@@ -37,6 +43,7 @@ public sealed class SqlConnectionFactory
             Encrypt = settings.Encrypt,
             TrustServerCertificate = settings.TrustServerCertificate,
             ConnectTimeout = settings.ConnectTimeoutSeconds,
+            ConnectRetryCount = 0,
             MaxPoolSize = settings.MaxPoolSize,
             MinPoolSize = 0,
             MultipleActiveResultSets = false,

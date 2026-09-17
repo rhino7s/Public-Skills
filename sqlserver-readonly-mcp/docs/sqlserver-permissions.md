@@ -2,6 +2,12 @@
 
 SQL Server 权限是 MCP 直接数据库访问的最终安全边界。MCP 配置默认使用只含 `public` 服务器角色的专用 SQL Login；只有管理员确认 AD 映射及实际用户最终权限后，才明确切换到 Windows 集成认证。两种模式都按实际用途逐个数据库授权。
 
+## 目录受限模式的公共角色
+
+可由管理员将已审核业务入口及内部跨库依赖所需权限集中授予少量公共角色，再把 AD 用户或群组加入角色。MCP 只检查用户 SQL 直接引用对象是否在当前 list grant 中，不逐层检查业务模块内部依赖；SQL Server 仍需要对应实际权限。目录受限的 table/view/TVF 需 SELECT，SQL 标量函数需 EXECUTE，procedure 需 EXECUTE；已有这些对象权限通常足以让核验看见对象，不额外要求 VIEW DEFINITION。
+
+角色覆盖范围与 MCP 目录范围不同。角色权限也可由其他 SQL 客户端使用，list grant 仅约束本 MCP；本机配置不是防篡改安全边界。数据库授权和跨库权限由管理员维护，本程序不自动执行授权脚本。下面全库只读及定义探索示例适用于需要这些权限的开发身份，并非目录受限模式的必填授权。
+
 ## Windows AD 集成认证
 
 客户端与 SQL Server 主机必须位于相同或互相信任的 Windows AD 域。先由 AD 管理员建立安全群组并加入获准用户，再由 DBA 建立一次 SQL Server 映射；SQL Server 不读取或保存 AD 密码。

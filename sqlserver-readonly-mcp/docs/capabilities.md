@@ -1,6 +1,6 @@
-# 可选业务能力目录
+# 业务能力目录
 
-当前源码支持，已完成开发中 MCP 的 AD 目录与 check 成功路径验证。其他账号、权限组合及查询计划仍需按部署环境验证。无需更改已有业务执行工具。
+当前源码支持，已完成开发中 MCP 的 AD 目录与 check 成功路径验证。其他账号、权限组合及查询计划仍需按部署环境验证。访问模式和本轮验证见 [访问模式](access-modes.md)、[验证记录](access-modes-validation.md)。
 
 ## 配置
 
@@ -14,8 +14,8 @@
 }
 ```
 
-- 不配置或两函数名留空时，不注册 list_capabilities、get_capability_details 和 execute_procedure，仅开放四项通用工具。
-- Windows 集成认证启用目录时必须配置两个函数。SQL 密码模式只要求 listFunction，即使设置 checkFunction 也不执行 AD 检查。
+- development 模式不配置目录时仅开放四项通用工具；catalog 模式缺目录则启动失败。
+- catalog 模式（AD 或 SQL 密码）必须配置两个函数，每次调用都执行入口检查。development 模式只要求可选的 listFunction，不执行入口 check；procedure 仍需目录授权。
 - 名称只允许三段、dbo schema，支持 `[带特殊字符的名称]` 引用，不接受调用括号、参数或 SQL 片段。
 - pageSize 为正整数，默认 100，最大 2147483646（预留额外探测行），实际每页同时受 query.maxResultSizeKb 限制。通常无需调整到很大。
 - 保存后重启本项目开发中 MCP。配置不热更新；数据库中的说明和授权则每次重新查询，无缓存。
@@ -49,15 +49,15 @@
 
 `tools_role_group.active` 控制单条角色组能力关联，默认 1。已有环境先由管理员执行 [关联启用字段迁移](migrate-capability-role-active.sql)，再部署目录函数。有效能力要求授权、角色组关联和能力本身三层 active 均为 1；同一能力有其他有效路径时仍保留，并按剩余路径排序。目录、详情、入口检查和 procedure 目录授权复用此过滤规则，不修改 SQL Server 本身的权限。MCP 无需调整接口或配置；全部路径停用后按既有空目录／拒绝规则处理。
 
-启用目录的 AD 连接，所有七个工具每次调用都先检查，再执行实际工具；即使 Agent 跳过目录或提交无效业务参数，仍先受统一检查。
+catalog 模式的四个工具每次调用都先检查，再执行实际工具；即使 Agent 跳过目录或提交无效业务参数，仍先受统一检查。
 
-检查返回 false、AD 首页目录为空或明确缺少 SQL 权限时返回 `access_denied`。检查超时、连接故障返回 `access_check_unavailable`，本次业务操作不执行，可稍后重试；函数缺失或契约错误使用相同 code，但提示联系管理员。调用方取消返回 `canceled`，不自动重试。目录读取故障返回 `capabilities_unavailable`，停止本次业务操作。所有错误仅提供通用说明，内部日志记录错误类型和 SQL 错误号，不记录凭证或说明正文。检查通过后业务操作仍可能因自身 SQL 权限不足而失败。
+检查返回 false、catalog 首页目录为空或明确缺少 SQL 权限时返回 `access_denied`。检查超时、连接故障返回 `access_check_unavailable`，本次业务操作不执行，可稍后重试；函数缺失或契约错误使用相同 code，但提示联系管理员。调用方取消返回 `canceled`，不自动重试。目录读取故障返回 `capabilities_unavailable`，停止本次业务操作。所有错误仅提供通用说明，内部日志记录错误类型和 SQL 错误号，不记录凭证或说明正文。检查通过后业务操作仍可能因自身 SQL 权限不足而失败。
 
 check 和实际操作按先后执行，各自使用现有连接池与并发门，不并行占用额外连接，不长期保持检查连接；本版不改变原工具连接生命周期。两次操作并非原子事务，已放行操作不因随后撤权而自动取消。不同数据库访问需要的成本应在部署环境测量。
 
-SQL 密码模式不做这项前置检查；目录读取失败返回一般的目录不可用错误，不泄露底层详情。
+development 模式不做这项前置检查；目录读取失败返回一般的目录不可用错误，不泄露底层详情。
 
-Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页大小由配置决定；structuredContent 包含 has_more 和 next_offset。以完整记录为单位分页，单条过长时明确报错。首次空目录对 AD 拒绝，越界 offset 返回结束页。分页期间数据变化可能重复或遗漏，必要时从 0 重读。
+Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页大小由配置决定；structuredContent 包含 has_more 和 next_offset。以完整记录为单位分页，单条过长时明确报错。首次空目录对 catalog 拒绝，越界 offset 返回结束页。分页期间数据变化可能重复或遗漏，必要时从 0 重读。
 
 ## 测试与部署边界
 
@@ -88,7 +88,7 @@ Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页�
 
 ## 固定提示词
 
-统一指令与工具注册共用 capabilities.Enabled 条件：未启用目录时不提及 list_capabilities、get_capability_details 或 execute_procedure。通用安全与范围规则集中在统一指令；工具说明保留用途及调用衔接；参数说明保留格式、默认值、范围和分页关系。启用目录后先读取完整摘要目录及适用条目的详情，执行 procedure 前仍确认 canExecute=true，参数不明确时读取详情。引用命中须核对 matches 和候选定义，长定义先定位后分段读取。此整理不改变程序授权或 SQL 安全检查。
+统一指令与工具注册共用 capabilities.Enabled 条件：未启用目录时不提及 list_capabilities、get_capability_details 或 execute_procedure。通用安全与范围规则集中在统一指令；工具说明保留用途及调用衔接；参数说明保留格式、默认值、范围和分页关系。启用目录后先读取完整摘要目录及适用条目的详情，procedure 的目录授权、类型及 EXECUTE 权限由程序内部强制检查，不要求 Agent 预查 canExecute；参数不明确时读取详情。引用命中须核对 matches 和候选定义，长定义先定位后分段读取。此整理不改变程序授权或 SQL 安全检查。
 
 ## 升级
 
@@ -97,3 +97,5 @@ Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页�
 ## 摘要/详情升级验证（2026-09-10）
 
 188 项本地单元/协议测试及 11 项真实只读联调通过。当前配置函数的摘要与详情响应、SQL bit 判定、查询部分失败统计均通过本项目开发 MCP 或项目 SQL 测试验证；未执行业务 procedure 或更改数据库。完整边界与产物哈希见 [实施记录](cb-practice-improvement-plan.md#11-实施记录2026-09-10)。
+
+本轮 catalog 模式的 execute_sql 也使用同一有效目录，按本批次的直接对象集合参数化匹配 iname；不读取 desp，不使用展示分页，不递归检查模块依赖。完整规则以 [访问模式](access-modes.md) 为准。此前构建哈希和验证条目仅为历史记录。

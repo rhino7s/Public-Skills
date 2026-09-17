@@ -1,139 +1,144 @@
 # Agent 通用安装说明
 
-供 Codex、OpenClaw、Claude 等支持本地 `stdio` MCP 的 Agent 使用；按客户端格式映射本文的 Name、Command 和 Args。
+供支持本地 stdio MCP 的 Agent 使用。安装、配置、连接验证是三个独立阶段；信息不足时完成可做部分，不猜测配置、不把连接失败当成安装失败。
 
-## 范围与身份校验
+## 取得正确版本
 
-`Public-Skills` 是多项目仓库。本次只安装 `sqlserver-readonly-mcp`，不要安装 `dab-mcp-skill`，也不要把整个仓库当作一个项目安装。
+| 项目 | 值 |
+|---|---|
+| 仓库 | https://github.com/rhino7s/Public-Skills |
+| Release 标签 | sqlserver-readonly-mcp-v&lt;版本&gt; |
+| Windows x64 包 | sqlserver-readonly-mcp-win-x64.zip |
+| 程序 | sqlserver-readonly-mcp.exe |
+| MCP 注册名称 | sqlserver-readonly |
+| 运行时 | Windows x64 自包含，无需另装 .NET |
 
-| 项目 | 正确值 |
-| --- | --- |
-| 来源 | `https://github.com/rhino7s/Public-Skills` |
-| Release 标签 | `sqlserver-readonly-mcp-v*` |
-| Windows 包 / 程序 | `sqlserver-readonly-mcp-win-x64.zip` / `sqlserver-readonly-mcp.exe` |
-| MCP 名称 | `sqlserver-readonly` |
-| 配置字段 | `connection.authentication`、`connection.server`、`connection.username`、`connection.password` |
-| 工具 | `execute_sql`、`execute_procedure`、`find_object`、`find_object_references`、`get_object_details` |
-| Windows 运行时 | x64 自包含包，不需要另装 .NET Runtime |
+只安装此仓库的 sqlserver-readonly-mcp 项目，不安装其他项目或同名产品。
 
-任一项不符，或出现 `credentialTarget`、顶层 `database` 等其他项目的配置格式时，立即停止；不要搜索或替换成同名、近似项目，也不要修改 Agent 配置。
+1. 从 [Release 列表](https://github.com/rhino7s/Public-Skills/releases) 选择本项目的目标版本，下载同一 Release 的 ZIP 与同名 .sha256 文件。
+2. 校验 ZIP：
 
-## Windows x64 安装
-
-1. 只下载以下两个文件：
-
-   - [最新 Windows x64 ZIP](https://github.com/rhino7s/Public-Skills/releases/latest/download/sqlserver-readonly-mcp-win-x64.zip)
-   - [SHA-256 校验文件](https://github.com/rhino7s/Public-Skills/releases/latest/download/sqlserver-readonly-mcp-win-x64.zip.sha256)
-
-2. 在两个文件所在目录校验 ZIP；失败时停止：
-
-```powershell
+~~~powershell
 $archivePath = Join-Path (Get-Location) 'sqlserver-readonly-mcp-win-x64.zip'
 $expectedHash = ((Get-Content -LiteralPath "$archivePath.sha256" -Raw).Trim() -split '\s+')[0]
 $actualHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualHash -ne $expectedHash) { throw 'Release ZIP 的 SHA-256 校验失败。' }
-```
+~~~
 
-3. 包内只能有以下 8 个文件；缺少、改名或出现其他可执行文件时停止：
+3. 解压后核对 VERSION.txt 与所选版本，并以包内 docs/agent-install.md 为该版本的安装依据。仓库 main 的说明可能领先于已发布程序。
+4. 本版包内包含以下 5 个文件；缺失或出现额外文件时停止并核对来源：
 
-   - `sqlserver-readonly-mcp.exe`
-   - `appsettings.example.json`
-   - `appsettings.schema.json`
-   - `README.md`
-   - `docs/agent-install.md`
-   - `docs/check-access.sql`
-   - `docs/sqlserver-permissions.md`
-   - `VERSION.txt`
+~~~text
+sqlserver-readonly-mcp.exe
+VERSION.txt
+appsettings.example.json
+appsettings.schema.json
+docs/agent-install.md
+~~~
 
-4. 解压到按版本区分的目录，例如 `C:\Users\<Windows用户名>\AppData\Local\Programs\sqlserver-readonly-mcp\<版本>`；尖括号内容必须替换为本机实际值。升级时使用新目录，验证后再切换 Agent 路径，不要覆盖正在运行的版本。
-5. 在独立配置目录复制 `appsettings.example.json` 和 `appsettings.schema.json`，将前者改名为 `appsettings.local.json`；两者保持同一相对位置，使 `$schema` 可解析。
+5. 安装到按版本区分的目录。升级使用新目录，验证后再切换 Agent 路径，不覆盖正在运行的版本。
 
-默认连接配置使用专用 SQL Login，字段保持完整；账号密码为空时程序会拒绝启动：
+## 准备本机配置
 
-```json
-"connection": {
-  "authentication": "sqlPassword",
-  "server": "SQLSERVER\\INSTANCE",
-  "username": "",
-  "password": "",
-  "encrypt": true,
-  "trustServerCertificate": true,
-  "connectTimeoutSeconds": 5,
-  "maxPoolSize": 2
-}
-```
+复制包内 appsettings.example.json 和 appsettings.schema.json 到独立配置目录，将示例改名为 appsettings.local.json；两者保持同一相对位置。升级时保留原配置，按目标版本说明补齐必要字段。
 
-将示例服务器和数据库替换为管理员指定值；若内部部署已预先填写，不要修改。默认模式必须在本机填写 `username` 和 `password`。只有管理员已确认 AD 映射及实际用户最终权限时，才能把 `authentication` 改为 `windowsIntegrated`，并将 `username` 和 `password` 保持为空字符串。
+| 必要信息 | 填写规则 |
+|---|---|
+| connection.server | 管理员提供的服务器／实例，不设置默认数据库 |
+| connection.authentication | sqlPassword 或 windowsIntegrated；省略时为 sqlPassword |
+| connection.username / password | SQL 密码认证必须填写；AD 必须为空字符串，使用进程当前 Windows 身份 |
+| access.mode | 示例为空白：AD 默认 catalog，SQL 密码默认 development；AD 不允许 development |
+| capabilities.listFunction | catalog 必填；development 可选，填写即启用目录 |
+| capabilities.checkFunction | catalog 必填；不能在缺少 listFunction 时单独配置 |
+| 两个目录函数名称 | 管理员提供的 database.dbo.function 三段名，不填参数或括号 |
 
-省略 `authentication` 时一律按 `sqlPassword` 处理，以兼容旧版配置且避免意外使用当前 AD 权限。
+SQL 密码认证下，access.mode 省略、null 或空白时使用 development；账号密码仍必须填写。AD 需管理员先完成身份映射及数据库授权。切换 AD 时可保留示例的空白 mode，并补齐两个目录函数。
 
-访问模式另由 `access.mode` 控制。SQL 密码未填时使用 development；AD 必须使用 catalog，需将示例中的 development 改为 catalog 或移除，并配置 `capabilities.listFunction` 和 `checkFunction`。AD 显式 development 或缺目录会拒绝启动。SQL 密码设为 catalog 时同样需要两个函数。升级后重启生效；迁移详见 [访问模式](access-modes.md)。
+缺少必要信息时，保留待填写的配置模板，报告缺项；不启动 MCP、不做连接测试，也不把未配置的实例启用到 Agent。不要要求用户将密码发送到聊天，凭证应在本机填写，不回显或上传。
 
-## 凭证、日志与权限
+### 配置路径与日志
 
-`sqlPassword` 模式不支持 Windows Credential Manager，密码明文保存在 `appsettings.local.json`；只能由用户在本机填写，不得在聊天、终端输出、日志、提交或上传中回显。
+| 项目 | 行为 |
+|---|---|
+| 配置路径优先级 | --config 参数 → SQLSERVER_MCP_CONFIG 环境变量 → 程序目录的 appsettings.local.json |
+| 相对配置路径 | 参数／环境变量中的相对路径以进程工作目录为基准；接入时使用绝对路径 |
+| logging.directory | 相对路径以程序目录为基准；建议改为独立的绝对路径 |
+| logging.minimumLevel | 控制运行日志；不关闭独立写入的调用审计 |
+| logging.includeSqlText | 默认 false；显式 true 才记录 SQL 文本，maxSqlTextChars 控制记录长度 |
+| logging.retentionDays | 默认 20 天 |
 
-`windowsIntegrated` 不读取或保存 AD 密码，SQL Server 接收的是 MCP 进程的当前 Windows 身份。客户端和 SQL Server 主机必须位于相同或互相信任的 Windows AD 域，SQL Server 端须已将对应 AD 用户或安全群组映射并授权。
+程序不展开配置路径中的 %USERPROFILE%、%LOCALAPPDATA% 或 PowerShell 变量。先读取实际目录，再写入展开后的绝对路径：
 
-先读取 Windows 实际目录：
-
-```powershell
+~~~powershell
 $localAppData = [Environment]::GetFolderPath('LocalApplicationData')
 $userProfile = [Environment]::GetFolderPath('UserProfile')
-```
+~~~
 
-程序、配置和日志分开存放：
+建议程序放在 $localAppData/Programs/sqlserver-readonly-mcp/&lt;版本&gt;，配置放在 $userProfile/.config/sqlserver-readonly，日志放在 $localAppData/sqlserver-readonly-mcp/logs。这些只是路径示意；写入 JSON 时使用实际绝对路径，建议用正斜线。
 
-- 程序：`$localAppData\Programs\sqlserver-readonly-mcp\<版本>`
-- 配置：`$userProfile\.codex\mcp-configs\sqlserver-readonly\appsettings.local.json`
-- 日志：`$localAppData\sqlserver-readonly-mcp\logs`
+程序、配置、日志分开存放。SQL 密码明文保存在本机配置；配置与日志的 NTFS ACL 仅开放给维护者、实际运行账号及必要系统管理员，不能用文件“只读”属性替代访问控制。日志可能含业务诊断内容，不提交或上传。
 
-`$localAppData` 和 `$userProfile` 只用于计算路径。写入 JSON、Command 和 Args 时，必须使用展开后的绝对路径，不得写入字面量 `$localAppData`、`$userProfile`、`%LOCALAPPDATA%` 或 `%USERPROFILE%`；程序不会展开这些变量。JSON 路径建议写成 `C:/Users/...`，若使用反斜线则必须按 JSON 规则写成 `C:\\Users\\...`。
+### 超时与结果限制
 
-将 `logging.directory` 设为展开后的日志绝对路径，并保持 `logging.includeSqlText=false`；只有用户明确接受 SQL 文本写入本机日志后才能启用。
+| 设置 | 用途 |
+|---|---|
+| connection.connectTimeoutSeconds | 连接默认 5 秒，无自动重连 |
+| 执行前预算 | 入口检查、解析、对象授权及元数据核验共用 15 秒 |
+| query.timeoutSeconds | 业务阶段总预算，含排队、连接及结果读取，默认 60 秒；也用于数据库命令超时 |
+| 结果限制 | 随包示例最多 500 行、512 KB；截断和部分结果以实际响应为准 |
 
-NTFS ACL 是限制访问账号，不是把文件设为“只读”，也不能用文件的只读属性代替：
+完整字段范围见随包 Schema。更改配置后重启 MCP 生效。
 
-| 账号 | 必要权限 |
-| --- | --- |
-| 负责维护配置的当前用户 | 修改配置文件 |
-| 其他 MCP 运行账号（如有） | 读取配置、修改日志目录 |
-| `SYSTEM`、本机 `Administrators` | 可保留完全控制 |
-| `Everyone`、`Users`、`Authenticated Users` 等泛用户组 | 不得读取配置或日志 |
+## 接入与分阶段验收
 
-当前用户与 MCP 运行账号相同时，无需重复授权；当前用户必须仍可修改配置，不是只读。
-
-## 接入与验证
-
-修改 Agent 现有配置前先备份。只新增或更新 `sqlserver-readonly`；若同名条目来源不明，停止并报告冲突。
+配置齐全后，备份 Agent 原配置，只新增或更新来源明确的 sqlserver-readonly 条目。
 
 | 参数 | 值 |
-| --- | --- |
-| Name | `sqlserver-readonly` |
-| Transport | `stdio` |
-| Command | `sqlserver-readonly-mcp.exe` 展开后的绝对路径 |
-| Args | `--config`、`appsettings.local.json` 展开后的绝对路径，作为两个独立参数 |
+|---|---|
+| Transport | stdio |
+| Command | 程序的绝对路径 |
+| Args | --config、配置文件绝对路径，作为两个独立参数 |
 
-重新加载 Agent 后，确认 `sqlserver-readonly` 服务恰好提供身份表中的 5 个工具；其他 MCP 服务的工具不在此检查范围内。数据库连接验证必须由用户指定数据库和对象，并使用低成本只读操作；不要枚举数据库、对象或执行大范围查询。
+重新加载该 MCP 后，按配置核对工具集合：
 
-Windows 集成模式必须由实际 MCP Windows 身份使用 SQL 客户端（如 SSMS）运行 `check-access.sql` 的 `currentSession` 模式，并确认返回的 LoginName 与该身份一致；不得尝试模拟 AD 群组。该脚本含内部动态 SQL，不能通过本服务的 `execute_sql` 运行。完整权限检查会遍历数据库，应作为单独的管理员权限核验步骤，不作为普通安装连通性测试。
+| 配置 | 预期工具 |
+|---|---|
+| catalog | execute_sql、execute_procedure、list_capabilities、get_capability_details（4 项） |
+| development，目录禁用 | execute_sql、find_object、get_object_details、find_object_references（4 项） |
+| development，目录启用 | 上一行 4 项，加 execute_procedure、list_capabilities、get_capability_details（7 项） |
 
-## 其他平台
+这是安装验收清单；目录返回的业务条目不增加 MCP 工具数量。完整技术规则由对应版本的仓库文档维护。
 
-Linux、Intel Mac 和 Apple Silicon Mac 暂无预编译 Release，需安装 .NET 10 SDK 后从源码运行 `publish-all.ps1` 或 `publish-all.sh`；本项目不承诺这些平台的 `windowsIntegrated` 支持，未经独立 Kerberos 验证时使用 `sqlPassword`。发布后设置：
+工具发现不需要数据库连接。配置齐全后可做以下低成本连接验证；用户要求只安装时跳过：
 
-```sh
-chmod 700 /absolute/path/sqlserver-readonly-mcp
-chmod 600 /absolute/path/appsettings.local.json
-```
+- catalog：先调用 list_capabilities 验证目录访问。业务查询不是安装必需项；需要验证时读取适用详情，只查询授权条目。
+- development：使用用户指定的数据库执行 SELECT 1；未指定数据库时标记连接待验证。
+- 不枚举数据库、不执行业务 procedure，也不为安装修改数据库授权。无法连接时提示“连接失败，请确认网络连接后再试。”，不自动重试。
+
+| 阶段结果 | 报告 |
+|---|---|
+| 文件已安装，配置不完整 | 安装完成，待补齐配置；列明缺项 |
+| 已接入且工具列表正确，未做连接测试 | 安装与接入完成，连接待验证 |
+| 配置被程序拒绝 | 安装完成，配置校验未通过；说明需修正字段 |
+| 连接失败 | 安装与接入完成，连接验证未通过 |
+| 目录拒绝访问 | 安装与接入完成，当前用户没有访问权限 |
+| 目录或低成本查询成功 | 安装、接入与连接验证完成，不代表所有业务权限已验证 |
+
+## 管理员与维护者入口
+
+数据库授权、SSMS 身份诊断及 check-access.sql 属于管理员工作，不是普通安装的必经步骤。需要时在上述仓库中选择与 VERSION.txt 相同的 sqlserver-readonly-mcp-v&lt;版本&gt; 标签，读取：
+
+- sqlserver-readonly-mcp/docs/sqlserver-permissions.md：数据库权限与诊断。
+- sqlserver-readonly-mcp/docs/access-modes.md：访问模式及授权规则。
+- sqlserver-readonly-mcp/docs/development.md：源码构建、测试与发布。
+
+这些文档不随包提供。Linux/macOS 从源码构建需要 .NET 10 SDK；本项目仅承诺 Windows AD 环境的集成认证，其他平台使用 SQL 密码。
 
 ## 交给 Agent 的安装指令
 
-```text
-请只安装 rhino7s/Public-Skills 仓库中的 sqlserver-readonly-mcp。
-
-先完整阅读并严格执行：
-https://github.com/rhino7s/Public-Skills/blob/main/sqlserver-readonly-mcp/docs/agent-install.md
-
-若来源、文件、配置格式或工具列表与文档不符，立即停止。凭证只能由用户在本机填写，不得要求发送到聊天或回显。
-```
+~~~text
+请安装 rhino7s/Public-Skills 的 sqlserver-readonly-mcp。
+从该项目 Release 下载目标版本及校验文件，校验后按包内 docs/agent-install.md 配置。
+缺少信息时先完成安装，列明待配置项目；不要猜测配置或要求我在聊天中提供密码。
+配置就绪后接入并验证工具列表，再做低成本连接验证，不自动重试。
+~~~

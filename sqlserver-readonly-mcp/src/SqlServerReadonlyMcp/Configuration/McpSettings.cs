@@ -77,7 +77,7 @@ public sealed class LoggingSettings
 
     public string MinimumLevel { get; init; } = "Information";
 
-    public bool IncludeSqlText { get; init; } = true;
+    public bool IncludeSqlText { get; init; } = false;
 
     public int MaxSqlTextChars { get; init; } = 65_536;
 }

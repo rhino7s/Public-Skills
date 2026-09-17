@@ -30,8 +30,12 @@ public sealed class CallTimingTests
         Assert.Null(CallTiming.Current);
     }
 
-    [Fact]
-    public void OrdinaryAuditContainsTimingAndNoSqlUnlessEnabled()
+    [Theory]
+    [InlineData("{}", false)]
+    [InlineData("{\"Logging\":{}}", false)]
+    [InlineData("{\"Logging\":{\"IncludeSqlText\":false}}", false)]
+    [InlineData("{\"Logging\":{\"IncludeSqlText\":true}}", true)]
+    public void OrdinaryAuditContainsTimingAndNoSqlUnlessEnabled(string configuration, bool includeSql)
     {
         var path = Path.Combine(Path.GetTempPath(), "mcp-timing-" + Guid.NewGuid().ToString("N"));
         try
@@ -40,7 +44,7 @@ public sealed class CallTimingTests
             using (var timing = new CallTiming(TestContext.Current.CancellationToken))
             {
                 writer.Initialize();
-                var audit = new AuditLogger(writer, new McpSettings { Logging = new() { IncludeSqlText = false } });
+                var audit = new AuditLogger(writer, JsonSerializer.Deserialize<McpSettings>(configuration)!);
                 using var phase = timing.Measure("parse");
                 audit.WriteQuery(new(timing.RequestId,"execute_sql","D","SELECT 'private'",0,1,0,0,0,false,null,"error",ErrorCategory:"safety_rejection"));
                 Assert.True(timing.Audited);
@@ -50,8 +54,13 @@ public sealed class CallTimingTests
             var row = json.RootElement;
             Assert.Equal(JsonValueKind.Number,row.GetProperty("parse_ms").ValueKind);
             Assert.Equal(JsonValueKind.Null,row.GetProperty("execution_ms").ValueKind);
-            Assert.Equal(JsonValueKind.Null,row.GetProperty("sql").ValueKind);
-            Assert.DoesNotContain("private",line);
+            if (includeSql)
+                Assert.Equal("SELECT 'private'", row.GetProperty("sql").GetString());
+            else
+            {
+                Assert.Equal(JsonValueKind.Null,row.GetProperty("sql").ValueKind);
+                Assert.DoesNotContain("private",line);
+            }
         }
         finally { if (Directory.Exists(path)) Directory.Delete(path,true); }
     }

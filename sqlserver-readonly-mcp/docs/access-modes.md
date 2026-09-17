@@ -22,7 +22,7 @@
 }
 ```
 
-AD 还须将 authentication 设为 windowsIntegrated，username/password 清空。随包示例采用 SQL 密码 development；改为 AD 时必须同步删除或更改该 mode。AD 旧配置缺目录时，新版拒绝启动。SQL 密码旧配置省略 mode 仍是 development。无需更改既有目录函数签名或新增数据库字段；配置改变后重启，数据库授权改变则下一次调用生效。
+AD 还须将 authentication 设为 windowsIntegrated，username/password 清空。随包示例采用 SQL 密码认证、空白 mode，默认 development；改为 AD 时可保留空白 mode，默认 catalog，但必须配置目录及检查函数。AD 旧配置缺目录时，新版拒绝启动。SQL 密码旧配置省略 mode 仍是 development。无需更改既有目录函数签名或新增数据库字段；配置改变后重启，数据库授权改变则下一次调用生效。
 
 ## MCP 工具矩阵
 

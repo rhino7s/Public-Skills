@@ -70,7 +70,7 @@ public sealed class CapabilityProtocolTests
                     Assert.True(result.IsError);
                     Assert.DoesNotContain("TestCatalog", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
                     Assert.Equal("access_check_unavailable", result.StructuredContent!.Value.GetProperty("code").GetString());
-                    Assert.Contains("当前暂时无法访问，请确认网络连接后再试。", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+                    Assert.Contains("连接失败，请确认网络连接后再试。", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
                 }
                 var audits = Directory.GetFiles(Path.Combine(directory,"logs"),"*.log")
                     .SelectMany(File.ReadAllLines).Select(line => JsonSerializer.Deserialize<JsonElement>(line))

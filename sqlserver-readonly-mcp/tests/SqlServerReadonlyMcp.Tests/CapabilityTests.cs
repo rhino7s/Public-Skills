@@ -81,6 +81,7 @@ public sealed class CapabilityTests
             Assert.True(result.IsError);
             Assert.Equal(code, result.StructuredContent!.Value.GetProperty("code").GetString());
             Assert.DoesNotContain("secret", Text(result));
+            Assert.DoesNotContain("连接失败", Text(result));
             Assert.Equal(0, store.Reads);
         }
     }
@@ -156,6 +157,7 @@ public sealed class CapabilityTests
             var result = await Service(Settings(), new FakeStore { Detail = row }).DetailsAsync(1, CancellationToken.None);
             Assert.Equal("capabilities_unavailable", result.StructuredContent!.Value.GetProperty("code").GetString());
             Assert.DoesNotContain("private", Text(result));
+            Assert.DoesNotContain("连接失败", Text(result));
         }
         var oversized = await Service(Settings(), new FakeStore { Detail = new(1, "", "summary", true, new string('a', 20_000)) }).DetailsAsync(1, CancellationToken.None);
         Assert.Equal("capability_too_large", oversized.StructuredContent!.Value.GetProperty("code").GetString());

@@ -51,7 +51,7 @@
 
 catalog 模式的四个工具每次调用都先检查，再执行实际工具；即使 Agent 跳过目录或提交无效业务参数，仍先受统一检查。
 
-检查返回 false、catalog 首页目录为空或明确缺少 SQL 权限时返回 `access_denied`。检查超时、连接故障返回 `access_check_unavailable`，本次业务操作不执行，可稍后重试；函数缺失或契约错误使用相同 code，但提示联系管理员。调用方取消返回 `canceled`，不自动重试。目录读取故障返回 `capabilities_unavailable`，停止本次业务操作。所有错误仅提供通用说明，内部日志记录错误类型和 SQL 错误号，不记录凭证或说明正文。检查通过后业务操作仍可能因自身 SQL 权限不足而失败。
+检查返回 false、catalog 首页目录为空或明确缺少 SQL 权限时拒绝访问。检查或目录读取失败时停止本次业务操作；检查通过后，业务操作仍可能因实际数据库权限不足而失败。错误类别、对外提示及重试规则统一见 [错误响应](access-modes.md#错误响应)。
 
 check 和实际操作按先后执行，各自使用现有连接池与并发门，不并行占用额外连接，不长期保持检查连接；本版不改变原工具连接生命周期。两次操作并非原子事务，已放行操作不因随后撤权而自动取消。不同数据库访问需要的成本应在部署环境测量。
 
@@ -65,20 +65,7 @@ Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页�
 
 后续由管理员配置开发中 MCP，再验证真实函数结果、AD 权限拒绝及执行计划。脚本 [check-capability-permissions.sql](check-capability-permissions.sql) 仅供管理员在配置库手动诊断，不通过普通 MCP 执行，不更改授权；输出有效权限差异、未验证项和扫描范围。真实数据库联调前，不将语法检查视为权限或性能验证。
 
-初始 capabilities 实现验证记录（以下哈希仅标识当时产物）：
-
-- 构建零警告、零错误；155 项测试中 151 项通过，4 项真实数据库测试因未配置而跳过。
-- 沙箱命名管道限制导致 dotnet test 包装进程无法连接，改为直接运行项目编译的 xUnit 测试程序集，完整测试通过。
-- 四个平台的本地构建产物已生成。NuGet 审计源不可访问，最后一次构建只在进程环境中临时关闭审计并使用已有依赖，未改项目审计配置；不代表漏洞审计通过。
-- 摘要升级前的 `publish/win-x64/sqlserver-readonly-mcp.exe` 曾通过独立 stdio 验证：当时注册六项工具、AD 检查连接失败统一拒绝。使用临时测试配置及 `127.0.0.1:1`，未使用真实 MCP 或数据库配置。
-- Windows 产物 SHA-256：`A49AF117698B10328734517831DA7595F1DD618687FE6B270CC135646F84DCF4`。
-- 函数及管理员核查脚本通过 ScriptDom 语法解析，未在数据库执行；实际权限、跨库定序和查询计划仍待联调。
-
-移除默认库依赖后的补充验证：
-
-- 160 项自动测试中 156 项通过，4 项通用数据库联调测试跳过；新增缺失目标库拒绝、连接参数隔离和旧 defaultDatabase 字段忽略测试。
-- 另通过最新项目开发中 MCP 和未修改的本地 AD 配置进行实际只读验证：目录返回 1 条 SKILL，check 返回 SQL bit true，DB_NAME() 与明确指定的目标数据库一致。
-- 配置文件测试前后哈希一致；未修改实际表、函数或授权，未调用 Codex 已配置的真实 MCP。
+历史验证与待验收事项集中在 [验证记录](access-modes-validation.md)。
 
 ## Procedure 强制授权
 
@@ -86,16 +73,31 @@ Agent 首次调用 list_capabilities 不需参数，续取只传 `offset`。页�
 
 对象名按数据库、schema、对象分别比较，数据库名通过 DB_ID 解析；schema 和对象名使用目标库目录定序（CATALOG_DEFAULT），不使用数据定序，兼容方括号。未匹配返回 access_denied；查询失败返回安全的不可用/取消状态，不执行业务调用。授权通过后仍核验真实用户 procedure、系统同名冲突及 EXECUTE 权限。检查与执行不是原子事务。无需为 grant 增加对象类型字段。
 
-## 固定提示词
+## 提示词
 
-统一指令与工具注册共用 capabilities.Enabled 条件：未启用目录时不提及 list_capabilities、get_capability_details 或 execute_procedure。通用安全与范围规则集中在统一指令；工具说明保留用途及调用衔接；参数说明保留格式、默认值、范围和分页关系。启用目录后先读取完整摘要目录及适用条目的详情，procedure 的目录授权、类型及 EXECUTE 权限由程序内部强制检查，不要求 Agent 预查 canExecute；参数不明确时读取详情。引用命中须核对 matches 和候选定义，长定义先定位后分段读取。此整理不改变程序授权或 SQL 安全检查。
+实际统一指令、工具及参数说明统一维护于 [工具与参数说明](tool-prompts.md)；工具开放范围及授权规则见 [访问模式](access-modes.md)。
+
+## 目录维护
+
+| 项目 | 维护要求 |
+|---|---|
+| tools_info | skill 的 iname 为空；grant 的 iname 为完整三段对象名，同一业务对象复用既有条目；remark 不对外返回 |
+| tools_role_group | 同一 rname、tool_id 不重复；active 控制该条关联 |
+| tools_grant | 同一 u_name、rname 不重复；u_name 使用实际 ORIGINAL_LOGIN()，共用 SQL Login 的用户共用目录 |
+| id / ord | id 是稳定标识；ord 仅控制展示顺序 |
+| 身份与角色变更 | 管理员同步维护授权及角色关联，检查回收后重新使用的账号名；数据库权限仍需单独配置 |
+
+表结构及约束以 [首次建表脚本](create-capabilities-tables.sql) 为准，目录函数以 [函数脚本](create-capabilities-functions.sql) 为准。脚本由管理员按环境执行，不自动创建权限。
 
 ## 升级
 
-已升级的数据库无需重建。其他环境使用 [分阶段迁移脚本](migrate-capability-summaries.sql)，人工补齐摘要后部署 [最终函数](create-capabilities-functions.sql) 与新版程序。旧 MCP 不能正确消费空 desp，回滚必须恢复兼容的正文、函数和程序组合。迁移不自动复制正文作为摘要，也不更改授权。
+已升级的数据库无需重建。其他环境按以下顺序迁移：
 
-## 摘要/详情升级验证（2026-09-10）
+1. 使用 [摘要迁移脚本](migrate-capability-summaries.sql) 增加可空 summary。
+2. 人工补齐全部记录（包括停用记录）的摘要，检查后改为 NOT NULL；不自动复制正文作为摘要。
+3. 旧 MCP 仍在使用时，保留其兼容的目录函数输出及非空 desp。
+4. 配套部署 [最终函数](create-capabilities-functions.sql) 与新版 MCP 后，再使用空 desp。
 
-188 项本地单元/协议测试及 11 项真实只读联调通过。当前配置函数的摘要与详情响应、SQL bit 判定、查询部分失败统计均通过本项目开发 MCP 或项目 SQL 测试验证；未执行业务 procedure 或更改数据库。完整边界与产物哈希见 [实施记录](cb-practice-improvement-plan.md#11-实施记录2026-09-10)。
+回滚须恢复兼容的程序、函数与正文组合；已有空 desp 时不能只换回旧程序。迁移不更改授权。排序和关联 active 字段的迁移见上文。
 
-本轮 catalog 模式的 execute_sql 也使用同一有效目录，按本批次的直接对象集合参数化匹配 iname；不读取 desp，不使用展示分页，不递归检查模块依赖。完整规则以 [访问模式](access-modes.md) 为准。此前构建哈希和验证条目仅为历史记录。
+catalog 的 execute_sql 使用同一有效目录，按本批次直接对象集合匹配 iname；不读取 desp、不受展示分页限制、不递归检查模块依赖。完整规则见 [访问模式](access-modes.md)。

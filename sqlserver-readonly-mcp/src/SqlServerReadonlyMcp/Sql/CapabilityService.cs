@@ -50,7 +50,7 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
         }
     }
 
-    public static CallToolResult Unavailable() => Error("access_check_unavailable", "访问检查暂不可用，本次操作未执行；可稍后重试，不得绕过检查。");
+    public static CallToolResult Unavailable() => Error("access_check_unavailable", "暂时无法确认访问权限，本次操作未执行。");
     public static CallToolResult CheckTimedOut() => Error("access_check_unavailable", "访问检查超时，本次操作未执行；请稍后再试。");
     private static CallToolResult Canceled() => Error("canceled", "调用已取消。");
     private static CallToolResult FailureResult(Exception exception, CancellationToken token, bool checking)
@@ -61,8 +61,14 @@ public sealed class CapabilityService(McpSettings settings, ICapabilityStore sto
             && SqlErrorClassifier.Categorize(sql.Number) == "permission_denied") return Denied();
         if (exception is InvalidDataException or ArgumentException || exception is Microsoft.Data.SqlClient.SqlException missing
             && missing.Number is 195 or 201 or 207 or 208 or 4121)
-            return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "能力配置不可用，请联系管理员处理。");
-        return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "当前暂时无法访问，请确认网络连接后再试。");
+            return Error(checking ? "access_check_unavailable" : "capabilities_unavailable",
+                checking ? "暂时无法确认访问权限，本次操作未执行。" : "能力目录暂时无法读取。");
+        if (exception is Microsoft.Data.SqlClient.SqlException connection && SqlErrorClassifier.IsConnectionFailure(connection))
+            return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", PublicToolErrors.ConnectionFailed);
+        if (exception is TimeoutException or Microsoft.Data.SqlClient.SqlException { Number: -2 })
+            return Error(checking ? "access_check_unavailable" : "capabilities_unavailable", "请求超时，本次操作未执行。");
+        return Error(checking ? "access_check_unavailable" : "capabilities_unavailable",
+            checking ? "暂时无法确认访问权限，本次操作未执行。" : "能力目录暂时无法读取。");
     }
 
     public static CallToolResult Denied() => Error("access_denied", "用户没有访问权限");

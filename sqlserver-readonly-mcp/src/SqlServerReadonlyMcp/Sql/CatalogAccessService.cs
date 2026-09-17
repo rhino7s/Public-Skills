@@ -13,9 +13,9 @@ public sealed class CatalogAccessService(McpSettings settings, SqlConnectionFact
         try { return await VerifyCoreAsync(objects, token).ConfigureAwait(false); }
         catch (SqlException exception)
         {
-            var connection = exception.Data.Contains("mcp.connectionFailure") || SqlErrorClassifier.Categorize(exception.Number) == "connection_error";
+            var connection = SqlErrorClassifier.IsConnectionFailure(exception);
             return new("access_check_unavailable", connection
-                ? "当前暂时无法访问，请确认网络连接后再试。"
+                ? PublicToolErrors.ConnectionFailed
                 : "访问检查暂不可用，本次操作未执行，请联系管理员处理。", exception.Number);
         }
     }

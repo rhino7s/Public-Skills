@@ -43,7 +43,7 @@ public sealed class ConnectionTimeoutProtocolTests
             var result=await client.CallToolAsync("execute_sql",new Dictionary<string,object?> { ["database"]="D",["sql"]="SELECT 1" },cancellationToken:token);
             Assert.True(result.IsError);
             await accepted.Task.WaitAsync(TimeSpan.FromSeconds(1),token);
-            Assert.Contains("当前暂时无法访问，请确认网络连接后再试。",Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+            Assert.Contains("连接失败，请确认网络连接后再试。",Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
             Assert.True(watch.Elapsed < TimeSpan.FromSeconds(12),$"Connection failure took {watch.Elapsed.TotalSeconds:F2}s");
             var body=Assert.NotNull(result.StructuredContent);
             if(catalog) Assert.Equal("access_check_unavailable",body.GetProperty("code").GetString());

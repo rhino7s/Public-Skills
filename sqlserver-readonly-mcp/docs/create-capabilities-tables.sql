@@ -3,7 +3,7 @@
 在独立配置库中由管理员选中 SET NOCOUNT ON 起的建表段执行。
 前面的 SELECT/RETURN 是手工查看入口；不应整文件直接执行。
 不创建数据库、不迁移已有表、不部署函数、不授予权限。
-已有 tools_info 的环境应按 cb-practice-improvement-plan.md 分阶段迁移并人工补齐 summary，不能直接重跑 CREATE。
+已有 tools_info 的环境应按 capabilities.md 的升级步骤使用 migrate-capability-summaries.sql，并人工补齐 summary，不能直接重跑 CREATE。
 */
 
 select * from dbo.tools_info

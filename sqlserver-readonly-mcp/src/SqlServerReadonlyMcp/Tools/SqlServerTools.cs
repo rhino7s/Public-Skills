@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using SqlServerReadonlyMcp.Sql;
@@ -182,10 +183,29 @@ public sealed class SqlServerTools
                 : $"对象详情读取失败：{result.Error?.Message}");
     }
 
-    internal static CallToolResult CreateToolResult<T>(T result, bool success, string summary) => new()
+    internal static CallToolResult CreateToolResult<T>(T result, bool success, string summary)
     {
-        Content = [new TextContentBlock { Text = summary }],
-        StructuredContent = JsonSerializer.SerializeToElement(result, ToolJsonOptions),
-        IsError = !success,
-    };
+        if (success)
+            return new()
+            {
+                Content = [new TextContentBlock { Text = summary }],
+                StructuredContent = JsonSerializer.SerializeToElement(result, ToolJsonOptions),
+                IsError = false,
+            };
+        var body = JsonSerializer.SerializeToNode(result, ToolJsonOptions);
+        if (body?["error"] is JsonObject error)
+        {
+            var presented = PublicToolErrors.Present(error.Deserialize<ToolError>(ToolJsonOptions)!);
+            body["error"] = JsonSerializer.SerializeToNode(presented, ToolJsonOptions);
+            summary = body["resultSets"] is JsonArray { Count: > 0 }
+                ? "本次调用未完成，已返回部分结果。" + presented.Message
+                : presented.Message;
+        }
+        return new()
+        {
+            Content = [new TextContentBlock { Text = summary }],
+            StructuredContent = JsonSerializer.SerializeToElement(body, ToolJsonOptions),
+            IsError = !success,
+        };
+    }
 }

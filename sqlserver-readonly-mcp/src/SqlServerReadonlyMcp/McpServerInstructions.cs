@@ -8,7 +8,7 @@ internal static class McpServerInstructions
             按用户需求限定查询范围。
             禁止自行编写持久化修改 SQL。
             结果截断或调用失败时，说明已返回结果的范围与限制。
-            无法连接时，提示“无法连接内部数据库，请确认网络连接后再试。”，不自动重试。
+            无法连接时，提示“连接失败，请确认网络连接后再试。”，不自动重试。
             访问被拒绝时不得绕过限制。
             """;
         return capabilitiesEnabled

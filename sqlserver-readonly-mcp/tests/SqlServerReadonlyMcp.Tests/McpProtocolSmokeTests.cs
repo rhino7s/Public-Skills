@@ -198,7 +198,7 @@ public sealed class McpProtocolSmokeTests : IDisposable
         Assert.Equal("safety_rejection", rejectedQueryContent.GetProperty("error").GetProperty("category").GetString());
         Assert.True(rejectedQuery.IsError);
         var rejectedQueryText = Assert.IsType<TextContentBlock>(Assert.Single(rejectedQuery.Content)).Text;
-        Assert.Contains("查询失败", rejectedQueryText, StringComparison.Ordinal);
+        Assert.Equal(rejectedQueryContent.GetProperty("error").GetProperty("message").GetString(), rejectedQueryText);
         Assert.DoesNotContain("resultSets", rejectedQueryText, StringComparison.Ordinal);
 
         var rejectedPersistentWrite = await client.CallToolAsync(

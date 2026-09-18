@@ -238,7 +238,8 @@ public sealed class SqlServerIntegrationTests
         var result = await client.CallToolAsync("execute_procedure", new Dictionary<string, object?>
         {
             ["database"] = RequiredEnvironmentVariable(QueryDatabaseVariable),
-            ["sql"] = "EXEC dbo.sp_mcp_missing_" + Guid.NewGuid().ToString("N") + ";",
+            ["sql"] = "EXEC [" + RequiredEnvironmentVariable(QueryDatabaseVariable).Replace("]", "]]", StringComparison.Ordinal)
+                + "].dbo.sp_mcp_missing_" + Guid.NewGuid().ToString("N") + ";",
         }, cancellationToken: token);
         Assert.True(result.IsError);
         Assert.Equal("access_denied", result.StructuredContent!.Value.GetProperty("error").GetProperty("category").GetString());
@@ -324,6 +325,12 @@ public sealed class SqlServerIntegrationTests
         await using var client = await McpClient.CreateAsync(
             transport,
             cancellationToken: cancellationToken);
+
+        if (SettingsLoader.Load(configPath).IsCatalogMode)
+        {
+            await AssertCatalogToolUnavailableAsync(client, "find_object_references", cancellationToken);
+            return;
+        }
 
         var firstPage = await client.CallToolAsync(
             "find_object_references",
@@ -456,12 +463,27 @@ public sealed class SqlServerIntegrationTests
             transport,
             cancellationToken: cancellationToken);
 
+        if (SettingsLoader.Load(configPath).IsCatalogMode)
+        {
+            await AssertCatalogToolUnavailableAsync(client, "get_object_details", cancellationToken);
+            return;
+        }
+
         await AssertDefinitionPaginationAsync(
             client,
             database,
             objectName,
             definitionSearch,
             cancellationToken);
+    }
+
+    private static async Task AssertCatalogToolUnavailableAsync(McpClient client, string name, CancellationToken token)
+    {
+        var tools = await client.ListToolsAsync(cancellationToken: token);
+        Assert.DoesNotContain(tools, tool => tool.Name == name);
+        var error = await Assert.ThrowsAsync<ModelContextProtocol.McpProtocolException>(async () =>
+            await client.CallToolAsync(name, new Dictionary<string, object?>(), cancellationToken: token));
+        Assert.Contains("Unknown tool", error.Message);
     }
 
     private static StdioClientTransport CreateTransport(string configPath, string name)
